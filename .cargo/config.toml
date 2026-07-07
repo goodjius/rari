@@ -8,10 +8,7 @@ rustflags = [
 ]
 
 [target.aarch64-apple-darwin]
-rustflags = [
-  "-C",
-  "link-arg=-fuse-ld=/opt/homebrew/bin/ld64.lld"
-]
+rustflags = []
 
 [build]
 pipelining = true

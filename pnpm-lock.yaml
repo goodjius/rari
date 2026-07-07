@@ -333,16 +333,6 @@ importers:
 
   packages/use-cache-darwin-arm64: {}
 
-  packages/use-cache-darwin-x64: {}
-
-  packages/use-cache-linux-arm64: {}
-
-  packages/use-cache-linux-x64: {}
-
-  packages/use-cache-win32-arm64: {}
-
-  packages/use-cache-win32-x64: {}
-
   test/fixtures/app:
     dependencies:
       rari:
