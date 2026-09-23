@@ -7,12 +7,14 @@
 //! `node:rari/solid-vendor/*` shims that re-export the real ext modules
 //! (`node:` may import `ext:`).
 //!
-//! Scope note: this is the first-slice PoC vendor set (core reactivity,
-//! the web renderer, and the hyperscript helper used to author components
-//! without a JSX compiler). It does not cover `solid-js/store` or any
-//! router/meta packages.
+//! Scope note: core reactivity, the web renderer, the hyperscript helper
+//! used to author components without a JSX compiler, and `seroval` (the
+//! wire-encoding library used for props/hydration/actions - see
+//! crates/rari/src/rendering/base/js/solid_props_codec.ts). Does not cover
+//! `solid-js/store` or any router/meta packages.
 
-const VENDOR_MODULES: &[&str] = &["solid-js.js", "solid-js-web.js", "solid-js-h.js"];
+const VENDOR_MODULES: &[&str] =
+    &["solid-js.js", "solid-js-web.js", "solid-js-h.js", "seroval.js"];
 
 pub const NODE_VENDOR_PREFIX: &str = "node:rari/solid-vendor/";
 

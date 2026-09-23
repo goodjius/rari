@@ -16,17 +16,23 @@ use parking_lot::Mutex;
 use rari_error::RariError;
 use rustc_hash::FxHashSet;
 use serde_json::Value;
-use tokio::{fs, sync::OnceCell, time};
+use tokio::{
+    fs,
+    sync::{OnceCell, mpsc},
+    time,
+};
 
 use super::{
     constants::{
         BATCH_ERROR_COLLECTION, CACHE_CLEANUP_INTERVAL, EXTENSION_CHECKS, FIZZ_RENDER_SCRIPT,
         LOAD_FULL_REACT_VENDORS_SCRIPT, LOAD_RSC_VENDORS_SCRIPT,
         MEMORY_PRESSURE_RENDER_THRESHOLD_DEN, MEMORY_PRESSURE_RENDER_THRESHOLD_NUM,
-        RSC_RENDERER_SCRIPT, SERVER_FUNCTION_RESOLVER, SOLID_COMPONENT_LOADER_SCRIPT,
-        SOLID_PIPELINE_READY_CHECK, SOLID_RSC_RENDERER_SCRIPT, SOLID_STREAMING_SCRIPT,
-        STREAMING_FIZZ_SCRIPT, STREAMING_PIPELINE_READY_CHECK, V8_CACHE_CLEAR_SCRIPT,
-        module_registration_script_from_import, resolve_server_functions_for_component,
+        RSC_RENDERER_SCRIPT, SERVER_FUNCTION_RESOLVER, SOLID_ACTION_HANDLER_SCRIPT,
+        SOLID_ACTIONS_READY_CHECK, SOLID_COMPONENT_LOADER_SCRIPT, SOLID_ISLANDS_SCRIPT,
+        SOLID_PIPELINE_READY_CHECK, SOLID_PROPS_CODEC_SCRIPT, SOLID_RSC_RENDERER_SCRIPT,
+        SOLID_STREAMING_SCRIPT, STREAMING_FIZZ_SCRIPT, STREAMING_PIPELINE_READY_CHECK,
+        V8_CACHE_CLEAR_SCRIPT, module_registration_script_from_import,
+        resolve_server_functions_for_component,
     },
     types::{ResourceLimits, ResourceMetrics, ResourceTracker},
     utils::transform_imports_for_hmr,
@@ -50,6 +56,7 @@ pub struct RscRenderer {
     streaming_pipeline: OnceCell<()>,
     rsc_pipeline: OnceCell<()>,
     solid_pipeline: OnceCell<()>,
+    solid_actions_pipeline: OnceCell<()>,
 }
 
 impl RscRenderer {
@@ -72,6 +79,7 @@ impl RscRenderer {
             streaming_pipeline: OnceCell::new(),
             rsc_pipeline: OnceCell::new(),
             solid_pipeline: OnceCell::new(),
+            solid_actions_pipeline: OnceCell::new(),
         }
     }
 
@@ -393,6 +401,12 @@ globalThis['~errors'].batch.push({{
         self.load_js_script("solid_rsc_renderer.ts", SOLID_RSC_RENDERER_SCRIPT).await?;
         self.load_js_script("solid_streaming.ts", SOLID_STREAMING_SCRIPT).await?;
         self.load_js_script("solid_component_loader.ts", SOLID_COMPONENT_LOADER_SCRIPT).await?;
+        self.load_js_script("solid_props_codec.ts", SOLID_PROPS_CODEC_SCRIPT).await?;
+        self.load_js_script("solid_islands.ts", SOLID_ISLANDS_SCRIPT).await?;
+
+        self.runtime.execute_function("initSolidIslands", vec![]).await.map_err(|e| {
+            RariError::internal(format!("Failed to initialize Solid islands: {e}"))
+        })?;
 
         let ready = self
             .runtime
@@ -410,16 +424,31 @@ globalThis['~errors'].batch.push({{
         Ok(())
     }
 
-    /// First-slice Solid PoC: registers `module_specifier`'s default export
-    /// under `component_id` and server-renders it to an HTML string via the
-    /// vendored `solid-js/web`. No streaming, no Suspense, no client
-    /// components - see the Solid PoC plan for scope.
-    pub async fn render_solid_component_to_html(
+    /// Encodes `props` (arbitrary JSON, not restricted to what `serde_json`
+    /// round-trips through a JS object literal) into a seroval expression
+    /// string, for splicing into a client-visible hydration payload or
+    /// passing to a Solid render/hydrate call. See solid_props_codec.ts.
+    async fn encode_solid_props(&self, props: &Value) -> Result<String, RariError> {
+        self.ensure_solid_pipeline().await?;
+        let encoded = self.runtime.execute_function("encodeSolidProps", vec![props.clone()]).await?;
+        encoded.as_str().map(ToString::to_string).ok_or_else(|| {
+            RariError::internal("encodeSolidProps did not return a string".to_string())
+        })
+    }
+
+    /// Shared preamble for both the blocking and streaming Solid render
+    /// entry points: ensures the pipeline is loaded, resets per-render
+    /// island bookkeeping, registers the component, and encodes props.
+    /// Returns the seroval-encoded props expression ready to pass to
+    /// `renderSolidToHtml`/`renderSolidToHtmlStreaming`.
+    async fn prepare_solid_render(
         &self,
         module_specifier: &str,
         component_id: &str,
+        props: &Value,
     ) -> Result<String, RariError> {
         self.ensure_solid_pipeline().await?;
+        self.runtime.execute_function("resetSolidIslandState", vec![]).await?;
 
         let registered = self
             .runtime
@@ -434,13 +463,150 @@ globalThis['~errors'].batch.push({{
             )));
         }
 
+        self.encode_solid_props(props).await
+    }
+
+    /// Registers `module_specifier`'s default export under `component_id`
+    /// and server-renders it to an HTML string via the vendored
+    /// `solid-js/web`, with `props` passed through `encode_solid_props`. Any
+    /// islands (`solid_islands.ts::renderSolidIsland`) reached during the
+    /// render emit their rows inline in the returned HTML. No streaming, no
+    /// Suspense - see `render_solid_component_to_html_streaming` for that.
+    pub async fn render_solid_component_to_html(
+        &self,
+        module_specifier: &str,
+        component_id: &str,
+        props: &Value,
+    ) -> Result<String, RariError> {
+        let props_expr = self.prepare_solid_render(module_specifier, component_id, props).await?;
+
         let html = self
             .runtime
-            .execute_function("renderSolidToHtml", vec![Value::String(component_id.to_string())])
+            .execute_function(
+                "renderSolidToHtml",
+                vec![Value::String(component_id.to_string()), Value::String(props_expr)],
+            )
             .await?;
 
         html.as_str().map(ToString::to_string).ok_or_else(|| {
             RariError::internal("renderSolidToHtml did not return a string".to_string())
+        })
+    }
+
+    /// Streaming counterpart to `render_solid_component_to_html`: renders
+    /// via `solid-js/web`'s `renderToStream` (native Suspense boundary
+    /// reveal), pumping HTML chunks through `chunk_sender` as they become
+    /// available, using the existing generic streaming-script machinery
+    /// (`pick_runtime_for_streaming`/`queue_script_for_streaming` - the same
+    /// primitives `crates/rari/src/rendering/layout/core.rs`'s
+    /// `queue_streaming_script` wraps for the React/Fizz path; called
+    /// directly here since `layout` depends on `base`, not the reverse).
+    ///
+    /// Known limitation (not hit at pool_size=1, as in this module's tests):
+    /// `prepare_solid_render`'s component registration happens on whichever
+    /// isolate `execute_function`'s own round-robin picks, while this then
+    /// separately calls `pick_runtime_for_streaming()` - at pool_size > 1
+    /// these can select different isolates, and the streaming isolate
+    /// wouldn't have the component registered. Real route wiring will need
+    /// to pin both calls to the same picked isolate; out of scope here (see
+    /// the phase-2 plan's explicit HTTP-route-wiring exclusion).
+    pub async fn render_solid_component_to_html_streaming(
+        &self,
+        module_specifier: &str,
+        component_id: &str,
+        props: &Value,
+        stream_id: String,
+        chunk_sender: mpsc::Sender<Result<Vec<u8>, RariError>>,
+    ) -> Result<(), RariError> {
+        let props_expr = self.prepare_solid_render(module_specifier, component_id, props).await?;
+
+        let component_id_json = serde_json::to_string(component_id)
+            .map_err(|e| RariError::serialization(e.to_string()))?;
+        let stream_id_json =
+            serde_json::to_string(&stream_id).map_err(|e| RariError::serialization(e.to_string()))?;
+        let props_expr_json =
+            serde_json::to_string(&props_expr).map_err(|e| RariError::serialization(e.to_string()))?;
+        let script = format!(
+            "renderSolidToHtmlStreaming({component_id_json}, {stream_id_json}, {props_expr_json})"
+        );
+
+        let (handle, _stream_lease) = self.runtime.pick_runtime_for_streaming().await?;
+        let completion = handle
+            .queue_script_for_streaming(
+                stream_id,
+                format!("solid_streaming_{component_id}.ts"),
+                script,
+                chunk_sender,
+                None,
+            )
+            .await?;
+        completion.await
+    }
+
+    /// Lazily loads the Solid action handler (`SOLID_ACTION_HANDLER_SCRIPT`),
+    /// separately from `ensure_solid_pipeline` - a render-only use case
+    /// shouldn't pay for loading action-dispatch machinery it never calls.
+    async fn ensure_solid_actions_pipeline(&self) -> Result<(), RariError> {
+        self.solid_actions_pipeline
+            .get_or_try_init(|| async {
+                self.ensure_solid_pipeline().await?;
+                self.load_js_script("solid_action_handler.ts", SOLID_ACTION_HANDLER_SCRIPT).await?;
+
+                let ready = self
+                    .runtime
+                    .execute_script(
+                        "<check_solid_actions>".to_string(),
+                        SOLID_ACTIONS_READY_CHECK.to_string(),
+                    )
+                    .await
+                    .map_err(|e| {
+                        RariError::internal(format!("Failed to verify Solid action handler: {e}"))
+                    })?;
+                if ready.as_bool() != Some(true) {
+                    return Err(RariError::internal(
+                        "Solid action handler script loaded but dispatch function is unavailable"
+                            .to_string(),
+                    ));
+                }
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Dispatches a Solid server action: registers `module_specifier`'s
+    /// module namespace into the same `ssrModules` registry
+    /// `resolveActionFn` (reused unchanged from `action_fn_resolver.ts`)
+    /// reads from - via `module_registration_script_from_import`, the same
+    /// generic helper React's action dispatch uses - then calls
+    /// `export_name` on it with seroval-decoded `args_expr`, returning the
+    /// seroval-encoded result. JSON-body "reply" mode only (see
+    /// solid_action_handler.ts for the FormData-mode gap).
+    pub async fn dispatch_solid_server_action(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        args_expr: &str,
+    ) -> Result<String, RariError> {
+        self.ensure_solid_actions_pipeline().await?;
+
+        let register_script =
+            module_registration_script_from_import(module_specifier, module_specifier);
+        self.runtime
+            .execute_script("register_solid_action_module".to_string(), register_script)
+            .await?;
+
+        let action_id = format!("{module_specifier}#{export_name}");
+        let result = self
+            .runtime
+            .execute_function(
+                "dispatchSolidServerAction",
+                vec![Value::String(action_id), Value::String(args_expr.to_string())],
+            )
+            .await?;
+
+        result.as_str().map(ToString::to_string).ok_or_else(|| {
+            RariError::internal("dispatchSolidServerAction did not return a string".to_string())
         })
     }
 
@@ -1287,7 +1453,33 @@ globalThis['~rsc'].functions['{component_id}'] = {component_id};
 mod solid_poc_tests {
     use std::path::Path;
 
+    use serde_json::json;
+
     use super::*;
+
+    /// Reads a fixture under `test/fixtures/solid-poc-app/` and registers it
+    /// under a synthetic `.ts` specifier (not its real on-disk path),
+    /// mirroring production's `file:///rari_component/{id}.js` convention -
+    /// see `renders_the_solid_poc_fixture_component_through_real_v8` for why
+    /// this specifically needs the `.ts` extension (module-loader
+    /// TypeScript-stripping is keyed off it).
+    async fn register_solid_fixture(
+        renderer: &RscRenderer,
+        file_name: &str,
+        component_id: &str,
+    ) -> Result<String, RariError> {
+        let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/fixtures/solid-poc-app")
+            .join(file_name)
+            .canonicalize()
+            .map_err(|e| RariError::io(format!("Solid PoC fixture '{file_name}' not found: {e}")))?;
+        let source = std::fs::read_to_string(&fixture_path)
+            .map_err(|e| RariError::io(format!("Failed to read Solid PoC fixture '{file_name}': {e}")))?;
+
+        let module_specifier = format!("file:///rari_component/{component_id}.ts");
+        renderer.runtime.add_module_to_loader(&module_specifier, source).await?;
+        Ok(module_specifier)
+    }
 
     /// Real end-to-end proof for the Solid PoC: boots an actual V8 runtime
     /// (not the mocked `JsRuntimeInterface` used elsewhere in this crate's
@@ -1301,26 +1493,12 @@ mod solid_poc_tests {
         let runtime = Arc::new(JsExecutionRuntime::with_pool_size(None, 1));
         let renderer = RscRenderer::new(runtime);
 
-        let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../test/fixtures/solid-poc-app/component.ts")
-            .canonicalize()
-            .map_err(|e| RariError::io(format!("Solid PoC fixture not found: {e}")))?;
-        let source = std::fs::read_to_string(&fixture_path)
-            .map_err(|e| RariError::io(format!("Failed to read Solid PoC fixture: {e}")))?;
+        let module_specifier =
+            register_solid_fixture(&renderer, "component.ts", "solid_poc_app").await?;
 
-        // Registered under a synthetic specifier (not the real on-disk path),
-        // mirroring how production components reach the loader - see
-        // RscRenderer::register_component_without_loading's
-        // `file:///rari_component/{component_id}.js` convention. The real
-        // on-disk path is only used to read the fixture's raw TS source
-        // above; it's the `.ts` extension on *this* specifier that makes the
-        // module loader's `needs_typescript_transpilation` check strip types
-        // (see module_loader/core.rs) before evaluating it in V8.
-        let module_specifier = "file:///rari_component/solid_poc_app.ts".to_string();
-        renderer.runtime.add_module_to_loader(&module_specifier, source).await?;
-
-        let html =
-            renderer.render_solid_component_to_html(&module_specifier, "solid_poc_app").await?;
+        let html = renderer
+            .render_solid_component_to_html(&module_specifier, "solid_poc_app", &Value::Null)
+            .await?;
 
         assert!(
             html.contains("Hello from Solid"),
@@ -1341,6 +1519,260 @@ mod solid_poc_tests {
         assert_eq!(
             rsc_row,
             format!("I0:{{\"moduleId\":\"{module_specifier}\",\"exportName\":\"default\"}}\n")
+        );
+
+        Ok(())
+    }
+
+    /// Proves real props reach a Solid component: seroval-encodes a JSON
+    /// value, threads it through `render_solid_component_to_html`, and
+    /// checks it shows up in the rendered HTML - not just that
+    /// `encodeSolidProps` compiles. Also independently round-trips the
+    /// encoded expression through `seroval.deserialize` to confirm the wire
+    /// format is genuinely decodable (the same primitive the client
+    /// hydration entry will use), not just accepted by our own renderer.
+    #[tokio::test]
+    async fn renders_real_props_into_the_solid_poc_fixture() -> Result<(), RariError> {
+        let runtime = Arc::new(JsExecutionRuntime::with_pool_size(None, 1));
+        let renderer = RscRenderer::new(runtime);
+
+        let module_specifier =
+            register_solid_fixture(&renderer, "props-component.ts", "props_echo").await?;
+
+        let props = json!({ "count": 42 });
+        let html = renderer
+            .render_solid_component_to_html(&module_specifier, "props_echo", &props)
+            .await?;
+
+        assert!(html.contains("count=42"), "expected the prop value in rendered HTML, got: {html}");
+        assert!(html.contains(r#"id="props-echo""#), "expected the fixture's div id, got: {html}");
+
+        let props_expr = renderer.encode_solid_props(&props).await?;
+        let props_expr_json = serde_json::to_string(&props_expr)
+            .map_err(|e| RariError::serialization(e.to_string()))?;
+        let decode_script = format!(
+            r"(async function() {{
+                const {{ deserialize }} = await import('seroval');
+                return deserialize({props_expr_json});
+            }})()"
+        );
+        let decoded = renderer
+            .runtime
+            .execute_script("decode_props_roundtrip".to_string(), decode_script)
+            .await?;
+        assert_eq!(decoded, props, "seroval round-trip must preserve the original props value");
+
+        Ok(())
+    }
+
+    /// Proves islands (Solid's client-reference analog) actually work: a
+    /// page mixing plain server-only markup with one nested island renders
+    /// both correctly, and the emitted row is well-formed.
+    ///
+    /// Does NOT independently re-run `hydrate()` against the captured HTML
+    /// to prove zero hydration-mismatch, unlike what the phase-2 plan
+    /// originally called for - that turned out to be infeasible with what's
+    /// currently vendored: `solid-js/web`'s *server* build (vendored via the
+    /// 'node' export condition, required for `renderToString`/
+    /// `renderToStream` to work at all - see tools/bundle-solid-esm/bundle.ts)
+    /// exports `hydrate` as a hard `notSup` stub, confirmed by reading
+    /// `node_modules/.pnpm/solid-js@1.9.15/node_modules/solid-js/web/dist/server.js`'s
+    /// export list directly. Real hydration only exists in the *client*
+    /// build, which additionally needs a real `document` (solid-js/h's
+    /// `document is not defined` failure mode from phase 1 applies here
+    /// too). Proving zero-mismatch hydration would need either a second
+    /// vendored client build plus a DOM polyfill inside the V8 runtime, or a
+    /// separate jsdom-based JS test - both new scope, not attempted here.
+    #[tokio::test]
+    async fn renders_a_page_with_a_nested_solid_island() -> Result<(), RariError> {
+        let runtime = Arc::new(JsExecutionRuntime::with_pool_size(None, 1));
+        let renderer = RscRenderer::new(runtime);
+
+        // Registered so the page's relative `import Counter from
+        // './counter-island.ts'` resolves to the same specifier this uses
+        // as the island row's `moduleId` below.
+        register_solid_fixture(&renderer, "counter-island.ts", "counter-island").await?;
+        let page_specifier =
+            register_solid_fixture(&renderer, "page-with-island.ts", "page_with_island").await?;
+
+        let html = renderer
+            .render_solid_component_to_html(&page_specifier, "page_with_island", &Value::Null)
+            .await?;
+
+        assert!(
+            html.contains("server-only content"),
+            "expected the page's own server-only markup, got: {html}"
+        );
+        assert!(
+            html.contains(r#"id="page-with-island""#),
+            "expected the page wrapper div, got: {html}"
+        );
+        assert!(
+            html.contains(r#"data-rari-island="island-0""#),
+            "expected the island's DOM anchor, got: {html}"
+        );
+        assert!(
+            html.contains("clicks: 0"),
+            "expected the island's own rendered content, got: {html}"
+        );
+        assert!(
+            html.contains("window.__RARI_SOLID_ISLANDS__"),
+            "expected an inline island row script, got: {html}"
+        );
+
+        // Extract and parse the row payload out of the embedded <script> to
+        // check its fields precisely, rather than just substring-matching.
+        let marker = "__RARI_SOLID_ISLANDS__ ??= []).push(";
+        let start = html.find(marker).ok_or_else(|| {
+            RariError::internal(format!("island row script marker not found in: {html}"))
+        })? + marker.len();
+        let end = html[start..].find(")</script>").map(|i| start + i).ok_or_else(|| {
+            RariError::internal("island row script closing paren not found".to_string())
+        })?;
+        let row_js_string_literal = &html[start..end];
+        let row_text: String = serde_json::from_str(row_js_string_literal)
+            .map_err(|e| RariError::serialization(format!("row script payload not valid JSON: {e}")))?;
+
+        let (row_id, row_json) = row_text
+            .trim_end()
+            .strip_prefix('I')
+            .and_then(|rest| rest.split_once(':'))
+            .ok_or_else(|| RariError::internal(format!("malformed island row: {row_text}")))?;
+        assert_eq!(row_id, "0", "first row should use row index 0");
+
+        let row: Value = serde_json::from_str(row_json)
+            .map_err(|e| RariError::serialization(format!("row JSON payload invalid: {e}")))?;
+        assert_eq!(row["moduleId"], "file:///rari_component/counter-island.ts");
+        assert_eq!(row["exportName"], "default");
+        assert_eq!(row["islandId"], "island-0");
+        assert!(
+            row["renderId"].as_str().is_some_and(|s| !s.is_empty()),
+            "expected a non-empty renderId, got: {row}"
+        );
+        assert!(row["props"].as_str().is_some_and(|s| s.contains("clicks")), "expected the island's props to be seroval-encoded in the row, got: {row}");
+
+        Ok(())
+    }
+
+    /// Proves streaming Suspense boundary reveal genuinely works: a real
+    /// `mpsc::channel` collects chunks while the render runs concurrently
+    /// (mirroring `runtime::mod::tests::overlapping_streams_on_one_isolate_finish_near_max_delay`'s
+    /// `tokio::join!(exec, drain)` pattern), and the fallback markup must
+    /// arrive in an earlier chunk than the resource's real, delayed value -
+    /// proving actual out-of-order streaming, not just a non-crashing
+    /// synchronous render that happens to contain both strings.
+    #[tokio::test]
+    async fn streams_suspense_boundary_reveal_for_the_solid_poc_fixture() -> Result<(), RariError> {
+        let runtime = Arc::new(JsExecutionRuntime::with_pool_size(None, 1));
+        let renderer = RscRenderer::new(runtime);
+
+        let module_specifier =
+            register_solid_fixture(&renderer, "suspense-component.ts", "suspense_fixture").await?;
+
+        let (tx, mut rx) = mpsc::channel::<Result<Vec<u8>, RariError>>(16);
+
+        let render = renderer.render_solid_component_to_html_streaming(
+            &module_specifier,
+            "suspense_fixture",
+            &Value::Null,
+            "solid-suspense-test".to_string(),
+            tx,
+        );
+
+        let drain = async {
+            let mut chunks: Vec<String> = Vec::new();
+            while let Some(chunk) = rx.recv().await {
+                chunks.push(String::from_utf8_lossy(&chunk?).into_owned());
+            }
+            Ok::<_, RariError>(chunks)
+        };
+
+        let (render_result, chunks_result) = tokio::join!(render, drain);
+        render_result?;
+        let chunks = chunks_result?;
+
+        let full = chunks.concat();
+        assert!(
+            full.contains("Loading..."),
+            "expected the fallback markup somewhere in the stream, got: {full}"
+        );
+        assert!(
+            full.contains("resolved-value"),
+            "expected the resource's resolved value to stream in, got: {full}"
+        );
+        assert!(
+            full.contains("<template"),
+            "expected a <template>-based boundary reveal chunk (Solid's own reveal mechanism), got: {full}"
+        );
+
+        let fallback_chunk = chunks.iter().position(|c| c.contains("Loading..."));
+        let resolved_chunk = chunks.iter().position(|c| c.contains("resolved-value"));
+        match (fallback_chunk, resolved_chunk) {
+            (Some(fallback), Some(resolved)) => assert!(
+                fallback < resolved,
+                "expected the fallback to stream in an earlier chunk than the resolved value \
+                 (fallback chunk {fallback}, resolved chunk {resolved}) - got separate chunks: {chunks:?}"
+            ),
+            _ => panic!("expected both a fallback chunk and a resolved-content chunk, got: {chunks:?}"),
+        }
+
+        Ok(())
+    }
+
+    /// Proves a Solid server action genuinely dispatches through the reused
+    /// (unchanged) `resolveActionFn`/`validateActionArgs`: registers the
+    /// fixture module into the same `ssrModules` registry the resolver
+    /// reads from, calls the real exported function with seroval-decoded
+    /// args, and round-trips the seroval-encoded result back through
+    /// `seroval.deserialize` to confirm it's genuinely decodable.
+    #[tokio::test]
+    async fn dispatches_a_solid_server_action() -> Result<(), RariError> {
+        let runtime = Arc::new(JsExecutionRuntime::with_pool_size(None, 1));
+        let renderer = RscRenderer::new(runtime);
+
+        let module_specifier =
+            register_solid_fixture(&renderer, "greet-action.ts", "greet_action").await?;
+
+        let args_expr = renderer.encode_solid_props(&json!(["World"])).await?;
+        let result_expr =
+            renderer.dispatch_solid_server_action(&module_specifier, "greet", &args_expr).await?;
+
+        let result_expr_json = serde_json::to_string(&result_expr)
+            .map_err(|e| RariError::serialization(e.to_string()))?;
+        let decode_script = format!(
+            r"(async function() {{
+                const {{ deserialize }} = await import('seroval');
+                return deserialize({result_expr_json});
+            }})()"
+        );
+        let decoded = renderer
+            .runtime
+            .execute_script("decode_action_result".to_string(), decode_script)
+            .await?;
+        assert_eq!(decoded, json!("Hello, World!"));
+
+        Ok(())
+    }
+
+    /// Confirms the reused validator (`action_args_validation.core.ts`'s
+    /// `productionValidationConfig` - `maxStringLength: 10_000`) rejects an
+    /// oversized argument for Solid actions the same way it already does
+    /// for React ones, since the validator itself is untouched.
+    #[tokio::test]
+    async fn rejects_an_oversized_solid_server_action_payload() -> Result<(), RariError> {
+        let runtime = Arc::new(JsExecutionRuntime::with_pool_size(None, 1));
+        let renderer = RscRenderer::new(runtime);
+
+        let module_specifier =
+            register_solid_fixture(&renderer, "greet-action.ts", "greet_action").await?;
+
+        let oversized_arg = "x".repeat(10_001);
+        let args_expr = renderer.encode_solid_props(&json!([oversized_arg])).await?;
+
+        let result = renderer.dispatch_solid_server_action(&module_specifier, "greet", &args_expr).await;
+        assert!(
+            result.is_err(),
+            "expected the reused validator to reject an oversized argument, got: {result:?}"
         );
 
         Ok(())

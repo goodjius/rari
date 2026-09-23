@@ -30,6 +30,20 @@ pub const ACTION_HANDLER_SCRIPT: &str = concat!(
     include_str!("js/action_handler.ts"),
 );
 
+// Solid PoC action handler: reuses action_fn_resolver.ts and
+// action_args_validation.*.ts unchanged (confirmed framework-agnostic),
+// swaps the Flight-specific decode/encode for solid_action_handler.ts's
+// seroval-based one. See crates/rari/src/rendering/base/js/solid_action_handler.ts.
+pub const SOLID_ACTION_HANDLER_SCRIPT: &str = concat!(
+    include_str!("js/action_fn_resolver.ts"),
+    include_str!("js/action_args_validation.core.ts"),
+    include_str!("js/action_args_validation_v8.ts"),
+    include_str!("js/solid_action_handler.ts"),
+);
+
+pub const SOLID_ACTIONS_READY_CHECK: &str =
+    "typeof globalThis.dispatchSolidServerAction === 'function'";
+
 pub const GET_RSC_BINARY_B64: &str = r"(function() {
     const bin = globalThis['~rari']?.lastRscBinary;
     if (!bin || bin.length === 0) return null;
@@ -55,10 +69,15 @@ pub const RSC_RENDERER_SCRIPT: &str = include_str!("js/rsc_renderer.ts");
 pub const SOLID_RSC_RENDERER_SCRIPT: &str = include_str!("js/solid_rsc_renderer.ts");
 pub const SOLID_STREAMING_SCRIPT: &str = include_str!("../layout/js/solid_streaming.ts");
 pub const SOLID_COMPONENT_LOADER_SCRIPT: &str = include_str!("js/solid_component_loader.ts");
+pub const SOLID_PROPS_CODEC_SCRIPT: &str = include_str!("js/solid_props_codec.ts");
+pub const SOLID_ISLANDS_SCRIPT: &str = include_str!("js/solid_islands.ts");
 
 pub const SOLID_PIPELINE_READY_CHECK: &str = "typeof globalThis.renderSolidToHtml === 'function' \
         && typeof globalThis.renderToSolidRsc === 'function' \
-        && typeof globalThis.registerSolidComponent === 'function'";
+        && typeof globalThis.registerSolidComponent === 'function' \
+        && typeof globalThis.encodeSolidProps === 'function' \
+        && typeof globalThis.renderSolidIsland === 'function' \
+        && typeof globalThis.resetSolidIslandState === 'function'";
 
 pub const STREAMING_PIPELINE_READY_CHECK: &str = "typeof globalThis['~rari']?.renderStreamingDocument === 'function' \
         && typeof globalThis['~rari']?.renderStaticDocument === 'function'";

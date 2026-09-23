@@ -38,6 +38,7 @@ extension!(
         "solid/vendor/solid-js.js",
         "solid/vendor/solid-js-web.js",
         "solid/vendor/solid-js-h.js",
+        "solid/vendor/seroval.js",
     ],
 );
 

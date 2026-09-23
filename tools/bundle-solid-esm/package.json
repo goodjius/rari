@@ -9,6 +9,7 @@
   "devDependencies": {
     "@types/node": "catalog:typescript",
     "rolldown": "catalog:build",
+    "seroval": "catalog:solid",
     "solid-js": "catalog:solid"
   }
 }

@@ -1159,6 +1159,14 @@ impl ModuleLoader for RariModuleLoader {
                 );
             }
 
+            if specifier == "seroval" {
+                return self.resolve(
+                    &solid_vendor::node_vendor_specifier("seroval.js"),
+                    referrer,
+                    kind,
+                );
+            }
+
             if specifier == "rari" || specifier.starts_with("rari/") {
                 let is_ssr_context = referrer.contains("/ssr/");
                 if is_ssr_context {

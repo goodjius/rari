@@ -11,20 +11,39 @@ import { isRecord } from '../../packages/rari/src/shared/utils/type-guards.ts'
 // interop, no webpack chunk-loader shims to strip), so this bundler is far
 // simpler: it just re-bundles each vendored entry point into a single flat
 // file per the vendor/ directory convention `react_vendor.rs`/`solid_vendor.rs`
-// expect. First-slice PoC scope: `solid-js`, `solid-js/web`, `solid-js/h`
-// only - no `solid-js/store`, no router/meta packages.
+// expect. Scope: `solid-js`, `solid-js/web`, `solid-js/h`, `seroval` (the wire
+// encoding library used for props/hydration/actions - see
+// crates/rari/src/rendering/base/js/solid_props_codec.ts) - no `solid-js/store`,
+// no router/meta packages.
 
 const require = createRequire(import.meta.url)
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(SCRIPT_DIR, '../..')
 const OUT_DIR = path.join(ROOT, 'crates/rari/src/runtime/ext/rari/solid/vendor')
 
-const VENDORED_PACKAGES = ['solid-js'] as const
+const VENDORED_PACKAGES = ['solid-js', 'seroval'] as const
+
+/**
+ * Finds a package's package.json by walking up from its resolved entry
+ * point, rather than `require.resolve('pkg/package.json')` - some packages
+ * (seroval) have a strict `exports` map with no `"./package.json"` entry,
+ * which makes that form fail with ERR_PACKAGE_PATH_NOT_EXPORTED.
+ */
+function resolvePackageJson(pkg: string): string {
+  let dir = path.dirname(require.resolve(pkg))
+  for (;;) {
+    const candidate = path.join(dir, 'package.json')
+    if (fs.existsSync(candidate)) return candidate
+    const parent = path.dirname(dir)
+    if (parent === dir) throw new Error(`Could not find package.json for "${pkg}"`)
+    dir = parent
+  }
+}
 
 function readVendoredPackageVersions(): Record<string, string> {
   const versions: Record<string, string> = {}
   for (const pkg of VENDORED_PACKAGES) {
-    const pkgJsonPath = require.resolve(`${pkg}/package.json`)
+    const pkgJsonPath = resolvePackageJson(pkg)
     const parsed: unknown = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8'))
     if (!isRecord(parsed) || typeof parsed.version !== 'string')
       throw new Error(`Missing version field in ${pkgJsonPath}`)
@@ -57,7 +76,15 @@ const entries: BundleEntry[] = [
     name: 'solid-js-web',
     source: 'solid-js/web',
     hasDefaultExport: false,
-    externals: { 'solid-js': 'ext:rari/solid/vendor/solid-js.js' },
+    // 'seroval' de-dupes against our own vendored copy (solid-js/web's server
+    // build imports it directly for its resource-hydration serialization -
+    // see crates/rari/src/rendering/base/js/solid_props_codec.ts for why we
+    // vendor it too). 'seroval-plugins/web' (DOM-object plugin support) is
+    // left un-externalized/inlined - we don't use it directly.
+    externals: {
+      'solid-js': 'ext:rari/solid/vendor/solid-js.js',
+      seroval: 'ext:rari/solid/vendor/seroval.js',
+    },
   },
   {
     name: 'solid-js-h',
@@ -65,6 +92,7 @@ const entries: BundleEntry[] = [
     hasDefaultExport: true,
     externals: { 'solid-js': 'ext:rari/solid/vendor/solid-js.js' },
   },
+  { name: 'seroval', source: 'seroval', hasDefaultExport: false },
 ]
 
 function createVendorHeader(entry: BundleEntry): string {
