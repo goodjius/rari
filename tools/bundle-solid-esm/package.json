@@ -1,0 +1,14 @@
+{
+  "name": "@rari/bundle-solid-esm",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "bundle": "node bundle.ts"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:typescript",
+    "rolldown": "catalog:build",
+    "solid-js": "catalog:solid"
+  }
+}

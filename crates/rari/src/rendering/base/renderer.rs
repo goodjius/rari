@@ -23,8 +23,9 @@ use super::{
         BATCH_ERROR_COLLECTION, CACHE_CLEANUP_INTERVAL, EXTENSION_CHECKS, FIZZ_RENDER_SCRIPT,
         LOAD_FULL_REACT_VENDORS_SCRIPT, LOAD_RSC_VENDORS_SCRIPT,
         MEMORY_PRESSURE_RENDER_THRESHOLD_DEN, MEMORY_PRESSURE_RENDER_THRESHOLD_NUM,
-        RSC_RENDERER_SCRIPT, SERVER_FUNCTION_RESOLVER, STREAMING_FIZZ_SCRIPT,
-        STREAMING_PIPELINE_READY_CHECK, V8_CACHE_CLEAR_SCRIPT,
+        RSC_RENDERER_SCRIPT, SERVER_FUNCTION_RESOLVER, SOLID_COMPONENT_LOADER_SCRIPT,
+        SOLID_PIPELINE_READY_CHECK, SOLID_RSC_RENDERER_SCRIPT, SOLID_STREAMING_SCRIPT,
+        STREAMING_FIZZ_SCRIPT, STREAMING_PIPELINE_READY_CHECK, V8_CACHE_CLEAR_SCRIPT,
         module_registration_script_from_import, resolve_server_functions_for_component,
     },
     types::{ResourceLimits, ResourceMetrics, ResourceTracker},
@@ -48,6 +49,7 @@ pub struct RscRenderer {
     pub(crate) resource_tracker: Arc<ResourceTracker>,
     streaming_pipeline: OnceCell<()>,
     rsc_pipeline: OnceCell<()>,
+    solid_pipeline: OnceCell<()>,
 }
 
 impl RscRenderer {
@@ -69,6 +71,7 @@ impl RscRenderer {
             resource_tracker: Arc::new(ResourceTracker::new()),
             streaming_pipeline: OnceCell::new(),
             rsc_pipeline: OnceCell::new(),
+            solid_pipeline: OnceCell::new(),
         }
     }
 
@@ -373,6 +376,72 @@ globalThis['~errors'].batch.push({{
             ));
         }
         Ok(())
+    }
+
+    /// First-slice Solid PoC: lazily loads the vendored `solid-js` build and
+    /// the minimal render/protocol/component-loader scripts. Never called
+    /// from `initialize()`, so existing React routes are unaffected unless
+    /// something explicitly calls this or `render_solid_component_to_html`.
+    pub async fn ensure_solid_pipeline(&self) -> Result<(), RariError> {
+        self.solid_pipeline
+            .get_or_try_init(|| async { self.ensure_solid_pipeline_uncached().await })
+            .await?;
+        Ok(())
+    }
+
+    async fn ensure_solid_pipeline_uncached(&self) -> Result<(), RariError> {
+        self.load_js_script("solid_rsc_renderer.ts", SOLID_RSC_RENDERER_SCRIPT).await?;
+        self.load_js_script("solid_streaming.ts", SOLID_STREAMING_SCRIPT).await?;
+        self.load_js_script("solid_component_loader.ts", SOLID_COMPONENT_LOADER_SCRIPT).await?;
+
+        let ready = self
+            .runtime
+            .execute_script(
+                "<check_solid_pipeline>".to_string(),
+                SOLID_PIPELINE_READY_CHECK.to_string(),
+            )
+            .await
+            .map_err(|e| RariError::internal(format!("Failed to verify Solid pipeline: {e}")))?;
+        if ready.as_bool() != Some(true) {
+            return Err(RariError::internal(
+                "Solid PoC scripts loaded but render functions are unavailable".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// First-slice Solid PoC: registers `module_specifier`'s default export
+    /// under `component_id` and server-renders it to an HTML string via the
+    /// vendored `solid-js/web`. No streaming, no Suspense, no client
+    /// components - see the Solid PoC plan for scope.
+    pub async fn render_solid_component_to_html(
+        &self,
+        module_specifier: &str,
+        component_id: &str,
+    ) -> Result<String, RariError> {
+        self.ensure_solid_pipeline().await?;
+
+        let registered = self
+            .runtime
+            .execute_function(
+                "registerSolidComponent",
+                vec![Value::String(module_specifier.to_string()), Value::String(component_id.to_string())],
+            )
+            .await?;
+        if registered.as_bool() != Some(true) {
+            return Err(RariError::internal(format!(
+                "Solid component has no default export function: {module_specifier}"
+            )));
+        }
+
+        let html = self
+            .runtime
+            .execute_function("renderSolidToHtml", vec![Value::String(component_id.to_string())])
+            .await?;
+
+        html.as_str().map(ToString::to_string).ok_or_else(|| {
+            RariError::internal("renderSolidToHtml did not return a string".to_string())
+        })
     }
 
     async fn ensure_streaming_pipeline_uncached(&self) -> Result<(), RariError> {
@@ -1210,6 +1279,70 @@ globalThis['~rsc'].functions['{component_id}'] = {component_id};
             let mut registry = self.component_registry.lock();
             registry.mark_component_loaded(component_id);
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod solid_poc_tests {
+    use std::path::Path;
+
+    use super::*;
+
+    /// Real end-to-end proof for the Solid PoC: boots an actual V8 runtime
+    /// (not the mocked `JsRuntimeInterface` used elsewhere in this crate's
+    /// unit tests - see `runtime::mod::tests` for the established pattern
+    /// this mirrors), loads the vendored `solid-js` build, and renders the
+    /// real fixture component from `test/fixtures/solid-poc-app/component.ts`
+    /// to confirm the Rust -> V8 -> vendored-Solid pipeline genuinely works,
+    /// not just that the Rust code compiles.
+    #[tokio::test]
+    async fn renders_the_solid_poc_fixture_component_through_real_v8() -> Result<(), RariError> {
+        let runtime = Arc::new(JsExecutionRuntime::with_pool_size(None, 1));
+        let renderer = RscRenderer::new(runtime);
+
+        let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/fixtures/solid-poc-app/component.ts")
+            .canonicalize()
+            .map_err(|e| RariError::io(format!("Solid PoC fixture not found: {e}")))?;
+        let source = std::fs::read_to_string(&fixture_path)
+            .map_err(|e| RariError::io(format!("Failed to read Solid PoC fixture: {e}")))?;
+
+        // Registered under a synthetic specifier (not the real on-disk path),
+        // mirroring how production components reach the loader - see
+        // RscRenderer::register_component_without_loading's
+        // `file:///rari_component/{component_id}.js` convention. The real
+        // on-disk path is only used to read the fixture's raw TS source
+        // above; it's the `.ts` extension on *this* specifier that makes the
+        // module loader's `needs_typescript_transpilation` check strip types
+        // (see module_loader/core.rs) before evaluating it in V8.
+        let module_specifier = "file:///rari_component/solid_poc_app.ts".to_string();
+        renderer.runtime.add_module_to_loader(&module_specifier, source).await?;
+
+        let html =
+            renderer.render_solid_component_to_html(&module_specifier, "solid_poc_app").await?;
+
+        assert!(
+            html.contains("Hello from Solid"),
+            "expected real Solid SSR output, got: {html}"
+        );
+        assert!(html.contains(r#"id="solid-poc""#), "expected the fixture's div id, got: {html}");
+
+        let rsc_row = renderer
+            .runtime
+            .execute_function(
+                "renderToSolidRsc",
+                vec![Value::String(module_specifier.clone()), Value::String("default".to_string())],
+            )
+            .await?;
+        let rsc_row = rsc_row
+            .as_str()
+            .ok_or_else(|| RariError::internal("renderToSolidRsc did not return a string"))?;
+        assert_eq!(
+            rsc_row,
+            format!("I0:{{\"moduleId\":\"{module_specifier}\",\"exportName\":\"default\"}}\n")
+        );
+
         Ok(())
     }
 }

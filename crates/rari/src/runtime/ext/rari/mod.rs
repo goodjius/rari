@@ -34,6 +34,10 @@ extension!(
         "react/vendor/react-server-dom-webpack-client.js",
         "react/vendor/react-server-dom-webpack-server.js",
         "react/vendor/index.js",
+        // Solid PoC vendor set - see crates/rari/src/runtime/module_loader/solid_vendor.rs.
+        "solid/vendor/solid-js.js",
+        "solid/vendor/solid-js-web.js",
+        "solid/vendor/solid-js-h.js",
     ],
 );
 

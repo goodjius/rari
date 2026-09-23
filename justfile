@@ -277,6 +277,10 @@ prepare-binaries-dev:
 bundle-react-esm: _ensure-node-deps
     pnpm --filter @rari/bundle-react-esm bundle
 
+# Bundle Solid into ESM for rari's V8 runtime (Solid PoC, emits .js into the rari crate)
+bundle-solid-esm: _ensure-node-deps
+    pnpm --filter @rari/bundle-solid-esm bundle
+
 # --- Utility commands ---
 
 # Update Node.js dependencies interactively

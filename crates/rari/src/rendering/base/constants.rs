@@ -48,6 +48,18 @@ pub const STREAMING_FIZZ_SCRIPT: &str = concat!(
 );
 pub const RSC_RENDERER_SCRIPT: &str = include_str!("js/rsc_renderer.ts");
 
+// Solid PoC scripts (first-slice migration spike - see
+// crates/rari/src/runtime/module_loader/solid_vendor.rs). Loaded lazily via
+// RscRenderer::ensure_solid_pipeline, never from RscRenderer::initialize, so
+// existing React routes never load or pay for these.
+pub const SOLID_RSC_RENDERER_SCRIPT: &str = include_str!("js/solid_rsc_renderer.ts");
+pub const SOLID_STREAMING_SCRIPT: &str = include_str!("../layout/js/solid_streaming.ts");
+pub const SOLID_COMPONENT_LOADER_SCRIPT: &str = include_str!("js/solid_component_loader.ts");
+
+pub const SOLID_PIPELINE_READY_CHECK: &str = "typeof globalThis.renderSolidToHtml === 'function' \
+        && typeof globalThis.renderToSolidRsc === 'function' \
+        && typeof globalThis.registerSolidComponent === 'function'";
+
 pub const STREAMING_PIPELINE_READY_CHECK: &str = "typeof globalThis['~rari']?.renderStreamingDocument === 'function' \
         && typeof globalThis['~rari']?.renderStaticDocument === 'function'";
 

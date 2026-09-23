@@ -12,6 +12,7 @@ packages:
   - '!packages/use-cache-*'
   - test/fixtures/*
   - tools/bundle-react-esm
+  - tools/bundle-solid-esm
   - web
 catalogs:
   analytics:
@@ -68,6 +69,8 @@ catalogs:
     react: ^19.3.0
     react-dom: ^19.3.0
     react-server-dom-webpack: ^19.3.0
+  solid:
+    solid-js: ^1.9.15
   stylex:
     '@stylexjs/stylex': ^0.19.1
     '@stylexjs/unplugin': ^0.19.1

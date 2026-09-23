@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*", "tools/*"]
-exclude = ["tools/bundle-react-esm"]
+exclude = ["tools/bundle-react-esm", "tools/bundle-solid-esm"]
 resolver = "2"
 
 [workspace.package]

@@ -29,6 +29,7 @@ use super::{
     cache::ModuleCaching,
     config::RuntimeConfig,
     react_vendor,
+    solid_vendor,
     storage::ModuleStorage,
     stubs::{
         FALLBACK_MODULE_TEMPLATE, LOADER_STUB_TEMPLATE, RARI_CACHE_STUB, RARI_CALL_SERVER_STUB,
@@ -128,6 +129,8 @@ fn is_virtual_referrer(referrer: &str) -> bool {
         || referrer.contains(RARI_STUB_PATH)
         || referrer.contains("/react_vendor/")
         || referrer.starts_with(react_vendor::NODE_VENDOR_PREFIX)
+        || referrer.contains("/solid_vendor/")
+        || referrer.starts_with(solid_vendor::NODE_VENDOR_PREFIX)
         || referrer.contains("/rari_hmr/")
         || referrer.starts_with("ext:")
 }
@@ -718,6 +721,20 @@ export default {{}};
         ))))
     }
 
+    fn handle_solid_vendor_shim(
+        specifier_str: &str,
+        module_specifier: &ModuleSpecifier,
+    ) -> Option<ModuleLoadResponse> {
+        let module_name = specifier_str.strip_prefix(solid_vendor::NODE_VENDOR_PREFIX)?;
+        let source = solid_vendor::reexport_shim_source(module_name)?;
+        Some(ModuleLoadResponse::Sync(Ok(ModuleSource::new(
+            ModuleType::JavaScript,
+            ModuleSourceCode::String(source.into()),
+            module_specifier,
+            None,
+        ))))
+    }
+
     fn handle_file_protocol_modules(
         &self,
         specifier_str: &str,
@@ -978,6 +995,24 @@ impl ModuleLoader for RariModuleLoader {
             return Ok(url);
         }
 
+        // Same rationale as the react_vendor mapping above, for the Solid PoC vendor set.
+        if specifier.contains("/solid_vendor/")
+            || specifier.starts_with(solid_vendor::NODE_VENDOR_PREFIX)
+        {
+            let raw_name = specifier
+                .strip_prefix(solid_vendor::NODE_VENDOR_PREFIX)
+                .or_else(|| specifier.rsplit("/solid_vendor/").next())
+                .unwrap_or("");
+            let Some(module_name) = solid_vendor::normalize_vendor_module_name(raw_name) else {
+                return Err(JsErrorBox::generic(format!(
+                    "Unknown Solid vendor module: {raw_name}"
+                )));
+            };
+            let url = ModuleSpecifier::parse(&solid_vendor::node_vendor_specifier(&module_name))
+                .map_err(|err| JsErrorBox::generic(format!("Invalid URL: {err}")))?;
+            return Ok(url);
+        }
+
         if matches!(kind, ResolutionKind::DynamicImport)
             && referrer.contains("node_modules")
             && let Some(package_start) = referrer.rfind("node_modules/")
@@ -1099,6 +1134,31 @@ impl ModuleLoader for RariModuleLoader {
                 );
             }
 
+            // Solid PoC vendor resolution, mirroring the react/react-dom branches above.
+            if specifier == "solid-js" {
+                return self.resolve(
+                    &solid_vendor::node_vendor_specifier("solid-js.js"),
+                    referrer,
+                    kind,
+                );
+            }
+
+            if matches!(specifier, "solid-js/web") {
+                return self.resolve(
+                    &solid_vendor::node_vendor_specifier("solid-js-web.js"),
+                    referrer,
+                    kind,
+                );
+            }
+
+            if matches!(specifier, "solid-js/h") {
+                return self.resolve(
+                    &solid_vendor::node_vendor_specifier("solid-js-h.js"),
+                    referrer,
+                    kind,
+                );
+            }
+
             if specifier == "rari" || specifier.starts_with("rari/") {
                 let is_ssr_context = referrer.contains("/ssr/");
                 if is_ssr_context {
@@ -1190,6 +1250,10 @@ impl ModuleLoader for RariModuleLoader {
         }
 
         if let Some(response) = Self::handle_react_vendor_shim(&specifier_str, module_specifier) {
+            return response;
+        }
+
+        if let Some(response) = Self::handle_solid_vendor_shim(&specifier_str, module_specifier) {
             return response;
         }
 

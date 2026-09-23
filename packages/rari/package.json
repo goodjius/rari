@@ -186,6 +186,7 @@
     "@types/react": "catalog:react",
     "@types/react-dom": "catalog:react",
     "oxc-transform-react": "catalog:build",
+    "solid-js": "catalog:solid",
     "typescript": "catalog:typescript",
     "typescript-7": "catalog:typescript",
     "vite-plus": "catalog:build"
