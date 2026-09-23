@@ -98,6 +98,8 @@ import {
 import { transformDefineMdxComponents } from './transform/mdx-components'
 import { createReactCompilerPlugin } from './transform/react-compiler'
 import { createReactRefreshPlugins } from './transform/react-refresh'
+import { createSolidCompilerPlugin } from './transform/solid-compiler'
+import { buildSolidIslandReplacementFromImport } from './transform/solid-island-import'
 import { getUseCacheTransform } from './transform/use-cache'
 
 const DIST_NOT_BUILT_ERROR =
@@ -242,6 +244,13 @@ export interface RariOptions {
   }
   readonly mdx?: MdxPluginOptions
   readonly compiler?: boolean | ReactCompilerOptions
+  /**
+   * UI framework the app is authored in. `'react'` (default) keeps the
+   * existing React/RSC pipeline; `'solid'` swaps the React-hardwired pieces
+   * (JSX compiler, HMR, aliases, dedupe, resolve conditions, externals) for
+   * their Solid equivalents.
+   */
+  readonly framework?: 'react' | 'solid'
 }
 
 const DEFAULT_IMAGE_CONFIG = {
@@ -469,6 +478,8 @@ export function rari(
     }
   }
 
+  const framework = options.framework ?? 'react'
+
   const componentTypeCache = new Map<string, 'client' | 'server' | 'unknown'>()
   const clientComponents = new Set<string>()
   const moduleAnalysisCache = new ModuleAnalysisCache()
@@ -578,6 +589,11 @@ export function rari(
   }
 
   function transformServerModule(code: string, id: string, analysis: ModuleAnalysis): string {
+    // Solid actions are resolved by plain named export (action_fn_resolver.ts's
+    // resolveActionFn) - no registerServerReference wrapper, and inline
+    // ("use server" inside a function body) actions are not supported yet.
+    if (framework === 'solid') return code
+
     const projectRoot =
       options.projectRoot != null && options.projectRoot !== ''
         ? options.projectRoot
@@ -807,7 +823,7 @@ if (import.meta.hot) {
       config.resolve ??= {}
       const resolveOptions = config.resolve
       const existingDedupe = Array.isArray(resolveOptions.dedupe) ? resolveOptions.dedupe : []
-      const toAdd = ['react', 'react-dom']
+      const toAdd = framework === 'solid' ? [] : ['react', 'react-dom']
       resolveOptions.dedupe = [...new Set(existingDedupe).union(new Set(toAdd))]
 
       let existingAlias: Array<{
@@ -827,65 +843,71 @@ if (import.meta.hot) {
 
       const aliasFinds = new Set(existingAlias.map(a => String(a.find)))
       const hasExactReactAlias = existingAlias.some(entry => isExactReactAliasFind(entry.find))
-      try {
-        const reactPath = fileURLToPath(import.meta.resolve('react'))
-        const reactDomClientPath = fileURLToPath(import.meta.resolve('react-dom/client'))
-        const reactJsxRuntimePath = fileURLToPath(import.meta.resolve('react/jsx-runtime'))
-        const aliasesToAppend: Array<{ find: string | RegExp; replacement: string }> = []
-        if (!aliasFinds.has('react/jsx-runtime')) {
-          aliasesToAppend.push({
-            find: 'react/jsx-runtime',
-            replacement: reactJsxRuntimePath,
-          })
-        }
+      if (framework === 'react')
         try {
-          const reactJsxDevRuntimePath = fileURLToPath(import.meta.resolve('react/jsx-dev-runtime'))
-          if (!aliasFinds.has('react/jsx-dev-runtime')) {
+          const reactPath = fileURLToPath(import.meta.resolve('react'))
+          const reactDomClientPath = fileURLToPath(import.meta.resolve('react-dom/client'))
+          const reactJsxRuntimePath = fileURLToPath(import.meta.resolve('react/jsx-runtime'))
+          const aliasesToAppend: Array<{ find: string | RegExp; replacement: string }> = []
+          if (!aliasFinds.has('react/jsx-runtime')) {
             aliasesToAppend.push({
-              find: 'react/jsx-dev-runtime',
-              replacement: reactJsxDevRuntimePath,
+              find: 'react/jsx-runtime',
+              replacement: reactJsxRuntimePath,
             })
           }
-        } catch (err) {
-          if (!isMissingPackageExportError(err)) {
-            console.warn('[rari] Unexpected error resolving react/jsx-dev-runtime:', err)
+          try {
+            const reactJsxDevRuntimePath = fileURLToPath(
+              import.meta.resolve('react/jsx-dev-runtime'),
+            )
+            if (!aliasFinds.has('react/jsx-dev-runtime')) {
+              aliasesToAppend.push({
+                find: 'react/jsx-dev-runtime',
+                replacement: reactJsxDevRuntimePath,
+              })
+            }
+          } catch (err) {
+            if (!isMissingPackageExportError(err)) {
+              console.warn('[rari] Unexpected error resolving react/jsx-dev-runtime:', err)
+            }
           }
-        }
-        try {
-          const reactCompilerRuntimePath = fileURLToPath(
-            import.meta.resolve('react/compiler-runtime'),
-          )
-          if (!aliasFinds.has('react/compiler-runtime')) {
+          try {
+            const reactCompilerRuntimePath = fileURLToPath(
+              import.meta.resolve('react/compiler-runtime'),
+            )
+            if (!aliasFinds.has('react/compiler-runtime')) {
+              aliasesToAppend.push({
+                find: 'react/compiler-runtime',
+                replacement: reactCompilerRuntimePath,
+              })
+            }
+          } catch (err) {
+            if (!isMissingPackageExportError(err)) {
+              console.warn('[rari] Unexpected error resolving react/compiler-runtime:', err)
+            }
+          }
+          if (!hasExactReactAlias) aliasesToAppend.push({ find: /^react$/, replacement: reactPath })
+          if (!aliasFinds.has('react-dom/client')) {
             aliasesToAppend.push({
-              find: 'react/compiler-runtime',
-              replacement: reactCompilerRuntimePath,
+              find: 'react-dom/client',
+              replacement: reactDomClientPath,
             })
           }
+          resolveOptions.alias = [...existingAlias, ...aliasesToAppend]
         } catch (err) {
           if (!isMissingPackageExportError(err)) {
-            console.warn('[rari] Unexpected error resolving react/compiler-runtime:', err)
+            console.warn('[rari] Unexpected error configuring React aliases:', err)
           }
         }
-        if (!hasExactReactAlias) aliasesToAppend.push({ find: /^react$/, replacement: reactPath })
-        if (!aliasFinds.has('react-dom/client')) {
-          aliasesToAppend.push({
-            find: 'react-dom/client',
-            replacement: reactDomClientPath,
-          })
-        }
-        resolveOptions.alias = [...existingAlias, ...aliasesToAppend]
-      } catch (err) {
-        if (!isMissingPackageExportError(err)) {
-          console.warn('[rari] Unexpected error configuring React aliases:', err)
-        }
-      }
 
       config.environments ??= {}
 
       config.environments.rsc = {
         consumer: 'server',
         resolve: {
-          conditions: ['react-server', 'node', 'import'],
+          conditions:
+            framework === 'solid'
+              ? ['solid', 'node', 'import']
+              : ['react-server', 'node', 'import'],
         },
         build: {
           outDir: 'dist/server',
@@ -899,7 +921,7 @@ if (import.meta.hot) {
       config.environments.ssr = {
         consumer: 'server',
         resolve: {
-          conditions: ['node', 'import'],
+          conditions: framework === 'solid' ? ['solid', 'node', 'import'] : ['node', 'import'],
         },
         build: {
           outDir: 'dist/ssr',
@@ -913,7 +935,8 @@ if (import.meta.hot) {
       config.environments.client = {
         consumer: 'client',
         resolve: {
-          conditions: ['browser', 'import'],
+          conditions:
+            framework === 'solid' ? ['solid', 'browser', 'import'] : ['browser', 'import'],
         },
         ...config.environments.client,
       }
@@ -925,14 +948,17 @@ if (import.meta.hot) {
       config.optimizeDeps ??= {}
       config.optimizeDeps.include ??= []
 
-      const coreOptimizeDeps = [
-        'react',
-        'react-dom',
-        'react-dom/client',
-        'react-dom/server',
-        'react/jsx-runtime',
-        'react/jsx-dev-runtime',
-      ]
+      const coreOptimizeDeps =
+        framework === 'solid'
+          ? []
+          : [
+              'react',
+              'react-dom',
+              'react-dom/client',
+              'react-dom/server',
+              'react/jsx-runtime',
+              'react/jsx-dev-runtime',
+            ]
 
       for (const dep of coreOptimizeDeps) {
         if (!config.optimizeDeps.include.includes(dep)) config.optimizeDeps.include.push(dep)
@@ -1013,8 +1039,10 @@ if (import.meta.hot) {
                     }
                   }
 
-                  if (moduleId.includes('node_modules/react-dom')) return 'react-dom'
-                  if (moduleId.includes('node_modules/react')) return 'react'
+                  if (framework === 'react') {
+                    if (moduleId.includes('node_modules/react-dom')) return 'react-dom'
+                    if (moduleId.includes('node_modules/react')) return 'react'
+                  }
 
                   return 'vendor'
                 }
@@ -1177,10 +1205,19 @@ if (import.meta.hot) {
           setComponentType(resolvedImportPath, 'client')
           addTrackedClientComponent(resolvedImportPath)
 
-          const clientRefReplacement = buildClientReferenceReplacementFromImport(
-            imp,
-            clientReferenceIdForPath(resolvedImportPath),
-          )
+          const clientRefReplacement =
+            framework === 'solid'
+              ? {
+                  ...buildSolidIslandReplacementFromImport(
+                    imp,
+                    clientReferenceIdForPath(resolvedImportPath),
+                  ),
+                  helpers: [] as string[],
+                }
+              : buildClientReferenceReplacementFromImport(
+                  imp,
+                  clientReferenceIdForPath(resolvedImportPath),
+                )
           if (clientRefReplacement.code === '') continue
 
           for (const helper of clientRefReplacement.helpers) clientRefHelpers.add(helper)
@@ -1280,10 +1317,19 @@ ${clientTransformedCode}`
           continue
         }
 
-        const clientRefReplacement = buildClientReferenceReplacementFromImport(
-          imp,
-          clientReferenceIdForPath(resolvedImportPath),
-        )
+        const clientRefReplacement =
+          framework === 'solid'
+            ? {
+                ...buildSolidIslandReplacementFromImport(
+                  imp,
+                  clientReferenceIdForPath(resolvedImportPath),
+                ),
+                helpers: [] as string[],
+              }
+            : buildClientReferenceReplacementFromImport(
+                imp,
+                clientReferenceIdForPath(resolvedImportPath),
+              )
         if (clientRefReplacement.code === '') continue
 
         for (const helper of clientRefReplacement.helpers) clientRefHelpers.add(helper)
@@ -1294,7 +1340,7 @@ ${clientTransformedCode}`
           replacement: clientRefReplacement.code,
         })
         hasServerImports = true
-        needsReactImport = true
+        needsReactImport = framework === 'react'
       }
 
       for (const { start, end, replacement } of [...replacements].sort((a, b) => b.start - a.start))
@@ -1305,6 +1351,8 @@ ${clientTransformedCode}`
           ...clientRefHelpers,
         ])
       }
+
+      if (hasServerImports && framework === 'solid') return modifiedCode
 
       if (hasServerImports) {
         const hasReactImport =
@@ -1377,6 +1425,7 @@ ${clientTransformedCode}`
             cache: options.cache,
             action: options.action,
             jsPoolSize: options.jsPoolSize,
+            framework,
             origin: options.origin,
             htmlLimitedBots: options.htmlLimitedBots,
             experimental: options.experimental,
@@ -1974,6 +2023,40 @@ ${clientTransformedCode}`
 
       if (id === 'virtual:rari-mdx-components.ts') return buildMdxRegistryModule()
 
+      if (id === 'virtual:rari-entry-client.ts' && framework === 'solid') {
+        const projectRoot =
+          options.projectRoot != null && options.projectRoot !== ''
+            ? options.projectRoot
+            : process.cwd()
+        const srcDir = path.join(projectRoot, 'src')
+        const islands = new Set([
+          ...getKnownClientComponentPaths(),
+          ...collectClientComponentPaths(
+            normalizeScanDirs(srcDir, Object.values(resolvedAlias)),
+            moduleAnalysisCache,
+          ),
+        ])
+        const loaders = [...islands]
+          .filter(componentPath => {
+            try {
+              return moduleAnalysisCache.get(componentPath).topLevelUseClient
+            } catch {
+              return false
+            }
+          })
+          .map(
+            componentPath =>
+              `  ${JSON.stringify(clientReferenceIdForPath(componentPath))}: () => import(${JSON.stringify(toPosixPath(componentPath))}),`,
+          )
+          .join('\n')
+        return `import { hydrateAllSolidIslands } from 'rari/runtime/entry-client-solid'
+globalThis.__RARI_SOLID_ISLAND_LOADERS__ = {
+${loaders}
+}
+hydrateAllSolidIslands()
+`
+      }
+
       if (id === 'virtual:rari-entry-client.ts') {
         const projectRoot =
           options.projectRoot != null && options.projectRoot !== ''
@@ -2365,6 +2448,7 @@ export const createTemporaryReferenceSet = module.exports.createTemporaryReferen
     experimental: options.experimental,
     moduleAnalysisCache,
     mdx: options.mdx,
+    framework,
   })
 
   const webpackRequirePatchPlugin: Plugin = {
@@ -2395,13 +2479,14 @@ export const createTemporaryReferenceSet = module.exports.createTemporaryReferen
     },
   }
 
-  const plugins: Plugin[] = [...createReactRefreshPlugins()]
+  const plugins: Plugin[] = framework === 'solid' ? [] : [...createReactRefreshPlugins()]
 
-  if (options.compiler != null && options.compiler !== false)
+  if (framework === 'react' && options.compiler != null && options.compiler !== false)
     plugins.push(createReactCompilerPlugin(options.compiler))
 
   plugins.push(
     mainPlugin,
+    ...(framework === 'solid' ? [createSolidCompilerPlugin()] : []),
     createSilenceReactDirectiveLogsPlugin(),
     createStaticImagePlugin(),
     createFontPlugin(),

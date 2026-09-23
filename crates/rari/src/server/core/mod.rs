@@ -152,6 +152,7 @@ impl Server {
 
         ComponentLoader::load_ssr_client_components(&renderer.runtime).await?;
         ComponentLoader::load_client_reference_manifest(&renderer.runtime).await?;
+        ComponentLoader::load_solid_island_manifest(&renderer.runtime).await?;
         js_runtime.set_setup_mode(false);
 
         let routes_manifest = RoutesManifest::load_from_file(ROUTES_MANIFEST_PATH).await;

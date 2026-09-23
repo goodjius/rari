@@ -83,7 +83,7 @@ const entries: BundleEntry[] = [
     // left un-externalized/inlined - we don't use it directly.
     externals: {
       'solid-js': 'ext:rari/solid/vendor/solid-js.js',
-      seroval: 'ext:rari/solid/vendor/seroval.js',
+      'seroval': 'ext:rari/solid/vendor/seroval.js',
     },
   },
   {
@@ -131,7 +131,11 @@ function rewriteExternalImports(code: string, externals: Readonly<Record<string,
   return result
 }
 
-function assertExternalsRewritten(entryName: string, code: string, externals: Readonly<Record<string, string>>): void {
+function assertExternalsRewritten(
+  entryName: string,
+  code: string,
+  externals: Readonly<Record<string, string>>,
+): void {
   for (const pkg of Object.keys(externals)) {
     const escaped = pkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     if (new RegExp(`from(["'])${escaped}\\1`).test(code)) {

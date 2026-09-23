@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/prefer-readonly-parameter-types, typescript/non-nullable-type-assertion-style -- Rust-embedded script: bare `import()` of vendored Solid modules and `g` globals are untyped at this boundary */
 /// <reference path="../../types.d.ts" />
 
 /**
@@ -63,7 +64,8 @@ async function initSolidIslands(): Promise<void> {
 
 function islandState(): RariSolidIslandState {
   const state = g['~rariSolidIslands'] as RariSolidIslandState | undefined
-  if (state == null) throw new Error('[rari] Solid islands not initialized - call initSolidIslands first')
+  if (state == null)
+    throw new Error('[rari] Solid islands not initialized - call initSolidIslands first')
   return state
 }
 
@@ -136,7 +138,11 @@ function renderSolidIsland(
   let body: unknown
 
   if (parent != null && !parent.noHydrate) {
-    const child: SolidHydrateContext = { ...parent, id: core.sharedConfig.getNextContextId(), count: 0 }
+    const child: SolidHydrateContext = {
+      ...parent,
+      id: core.sharedConfig.getNextContextId(),
+      count: 0,
+    }
     core.sharedConfig.context = child
     renderId = child.id
     try {

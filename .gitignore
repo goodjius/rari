@@ -18,3 +18,5 @@ crates/rari/snapshots/*.bin
 crates/rari/snapshots/*.rs
 .env
 *.node
+
+test/fixtures/solid-app/.tmp

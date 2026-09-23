@@ -2,8 +2,14 @@
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["test/**/*.test.ts"],
-      "project": ["test/**/*.ts"]
+      "entry": ["test/**/*.test.ts", "test/solid/vite.config.ts"],
+      "project": ["test/**/*.ts"],
+      // Hand-authored SSR-only fixtures loaded by Rust tests through the module loader.
+      "ignore": ["test/fixtures/solid-poc-app/**"],
+      "ignoreDependencies": [
+        "jsdom", // vitest `environment: 'jsdom'` in test/solid/vite.config.ts
+        "seroval" // imported by Rust-embedded scripts under crates/, resolved via the vendored bundle at runtime
+      ]
     },
     "packages/rari": {
       "entry": [
@@ -70,10 +76,18 @@
         "mermaid" // Used by MermaidChart MDX client component
       ]
     },
+    "tools/bundle-solid-esm": {
+      "ignoreDependencies": ["seroval", "solid-js"] // bundled from node_modules by rolldown
+    },
     "tools/bundle-react-esm": {
       "ignoreDependencies": ["react-dom", "react-server-dom-webpack"]
     },
     "test/fixtures/app": {
+      "ignore": [
+        "**/*" // Test fixture app is not analyzed
+      ]
+    },
+    "test/fixtures/solid-app": {
       "ignore": [
         "**/*" // Test fixture app is not analyzed
       ]

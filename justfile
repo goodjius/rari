@@ -277,6 +277,13 @@ prepare-binaries-dev:
 bundle-react-esm: _ensure-node-deps
     pnpm --filter @rari/bundle-react-esm bundle
 
+# Build the JSX-authored Solid fixture app (rari + workspace deps built first; consumed by Rust real-V8 tests)
+build-solid-fixture: _ensure-node-deps
+    cd packages/logger && pnpm exec vp pack
+    cd packages/deploy && pnpm exec vp pack
+    cd packages/rari && pnpm exec vp pack
+    -pnpm --filter @test/solid-app build
+
 # Bundle Solid into ESM for rari's V8 runtime (Solid PoC, emits .js into the rari crate)
 bundle-solid-esm: _ensure-node-deps
     pnpm --filter @rari/bundle-solid-esm bundle

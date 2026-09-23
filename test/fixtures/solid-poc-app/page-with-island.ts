@@ -16,8 +16,8 @@
 // `moduleId` below matches what a client would need to re-import to
 // hydrate it.
 
-import { ssrElement } from 'solid-js/web'
 import Counter from 'file:///rari_component/counter-island.ts'
+import { ssrElement } from 'solid-js/web'
 
 type RenderSolidIsland = (
   component: (props: unknown) => unknown,
@@ -29,10 +29,14 @@ export default function PageWithIsland(): unknown {
   const renderSolidIsland = (globalThis as unknown as { renderSolidIsland: RenderSolidIsland })
     .renderSolidIsland
 
-  const island = renderSolidIsland(Counter as unknown as (props: unknown) => unknown, { label: 'clicks' }, {
-    moduleId: 'file:///rari_component/counter-island.ts',
-    exportName: 'default',
-  })
+  const island = renderSolidIsland(
+    Counter as unknown as (props: unknown) => unknown,
+    { label: 'clicks' },
+    {
+      moduleId: 'file:///rari_component/counter-island.ts',
+      exportName: 'default',
+    },
+  )
 
   return ssrElement('div', { id: 'page-with-island' }, ['server-only content', island], false)
 }

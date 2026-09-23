@@ -71,6 +71,8 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['test/**/*.test.ts'],
+    // Solid hydration tests need browser-condition resolution + jsdom; run via test/solid/vite.config.ts.
+    exclude: ['test/solid/**', '**/node_modules/**'],
     setupFiles: ['./test/setup.ts'],
     coverage: {
       include: ['packages/*/src/**/*.{ts,tsx}'],

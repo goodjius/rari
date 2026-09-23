@@ -4,6 +4,8 @@ import * as tsParser from '@typescript-eslint/parser'
 import gitignore from 'eslint-config-flat-gitignore'
 import oxlint from 'eslint-plugin-oxlint'
 import reactRefresh from 'eslint-plugin-react-refresh'
+import solid from 'eslint-plugin-solid/configs/typescript'
+import { reactOnlyRules, solidGlobs } from './globs'
 import { ignorePatterns } from './ignores'
 import { lint as oxlintConfig } from './oxlint'
 import { pnpmConfigs } from './pnpm'
@@ -69,12 +71,26 @@ const configs: Linter.Config[] = [
   {
     ...recommendedTypescript,
     files: ['**/*.{ts,tsx}'],
+    ignores: solidGlobs,
   },
   ...oxlintBridge,
   // After the oxlint bridge so HMR export checks stay enabled (oxlint owns react/only-export-components).
   {
     ...reactRefresh.configs.vite,
     files: ['**/*.{ts,tsx}'],
+    ignores: solidGlobs,
+  },
+  // Solid-authored files: eslint-plugin-solid instead of the React rules, and
+  // the React rules that the oxlint bridge enables everywhere are switched off.
+  {
+    // eslint-plugin-solid's rule types don't line up with ESLint's Linter.Config.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    ...(solid as unknown as Linter.Config),
+    files: solidGlobs,
+  },
+  {
+    files: solidGlobs,
+    rules: Object.fromEntries(reactOnlyRules.map(name => [`react/${name}`, 'off'] as const)),
   },
   {
     files: ['**/src/app/**'],

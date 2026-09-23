@@ -17,16 +17,28 @@
  * eventually loads it.
  */
 import type { Component } from 'solid-js'
+import { deserialize } from 'seroval'
 import { createComponent } from 'solid-js'
 import { hydrate } from 'solid-js/web'
-import { deserialize } from 'seroval'
+import { isFunction, isRecord } from '../shared/utils/type-guards'
 
-interface SolidIslandRow {
+export interface SolidIslandRow {
   readonly moduleId: string
   readonly exportName: string
   readonly islandId: string
   readonly renderId: string
   readonly props: string
+}
+
+function isIslandRow(value: unknown): value is SolidIslandRow {
+  return (
+    isRecord(value) &&
+    typeof value.moduleId === 'string' &&
+    typeof value.exportName === 'string' &&
+    typeof value.islandId === 'string' &&
+    typeof value.renderId === 'string' &&
+    typeof value.props === 'string'
+  )
 }
 
 export function decodeSolidIslandRow(rowText: string): SolidIslandRow {
@@ -36,18 +48,13 @@ export function decodeSolidIslandRow(rowText: string): SolidIslandRow {
     throw new Error(`[rari] Unrecognized Solid island row: ${row}`)
 
   const parsed: unknown = JSON.parse(row.slice(separatorIndex + 1))
-  if (
-    typeof parsed !== 'object' ||
-    parsed === null ||
-    typeof (parsed as Record<string, unknown>).moduleId !== 'string' ||
-    typeof (parsed as Record<string, unknown>).exportName !== 'string' ||
-    typeof (parsed as Record<string, unknown>).islandId !== 'string' ||
-    typeof (parsed as Record<string, unknown>).renderId !== 'string' ||
-    typeof (parsed as Record<string, unknown>).props !== 'string'
-  )
-    throw new Error(`[rari] Malformed Solid island row payload: ${row}`)
+  if (!isIslandRow(parsed)) throw new Error(`[rari] Malformed Solid island row payload: ${row}`)
 
-  return parsed as unknown as SolidIslandRow
+  return parsed
+}
+
+function asPropsRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {}
 }
 
 /**
@@ -59,22 +66,28 @@ export function decodeSolidIslandRow(rowText: string): SolidIslandRow {
  * goes through `createComponent` exactly like the server side did, so both
  * produce the same `data-hk` id sequence inside the island's subtree.
  */
-export async function hydrateSolidIsland(row: SolidIslandRow): Promise<void> {
+export async function hydrateSolidIsland(row: Readonly<SolidIslandRow>): Promise<void> {
   const container = document.querySelector(`[data-rari-island="${row.islandId}"]`)
   if (container == null)
     throw new Error(`[rari] Solid island anchor not found in DOM: ${row.islandId}`)
 
-  // oxlint-disable-next-line typescript/no-unsafe-assignment - dynamic module id from the server payload
-  const componentModule = (await import(/* @vite-ignore */ row.moduleId)) as Record<string, unknown>
-  const component = componentModule[row.exportName]
-  if (typeof component !== 'function')
+  // The virtual client entry (packages/rari/src/vite/index.ts) registers a
+  // loader per island module so the server's `moduleId` (a build-time id, not
+  // a browsable URL) resolves to a real dynamic import; fall back to importing
+  // the id directly for hand-rolled setups.
+  const loader = window.__RARI_SOLID_ISLAND_LOADERS__?.[row.moduleId]
+  const componentModule: unknown = await (loader != null
+    ? loader()
+    : import(/* @vite-ignore */ row.moduleId))
+  const component = isRecord(componentModule) ? componentModule[row.exportName] : undefined
+  if (!isFunction(component))
     throw new Error(`[rari] Solid island export not found: ${row.moduleId}#${row.exportName}`)
 
-  const props = row.props !== '' ? deserialize(row.props) : {}
+  const props = asPropsRecord(row.props !== '' ? deserialize(row.props) : {})
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion - component/props shapes are dynamic (loaded by module id)
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion - component shape is dynamic (loaded by module id)
   const typedComponent = component as Component<Record<string, unknown>>
-  hydrate(() => createComponent(typedComponent, props as Record<string, unknown>), container, {
+  hydrate(() => createComponent(typedComponent, props), container, {
     renderId: row.renderId,
   })
 }
@@ -82,6 +95,7 @@ export async function hydrateSolidIsland(row: SolidIslandRow): Promise<void> {
 declare global {
   interface Window {
     __RARI_SOLID_ISLANDS__?: readonly string[]
+    __RARI_SOLID_ISLAND_LOADERS__?: Readonly<Record<string, () => Promise<unknown>>>
   }
 }
 
@@ -95,16 +109,11 @@ export function hydrateAllSolidIslands(): void {
   const existing = window.__RARI_SOLID_ISLANDS__ ?? []
   for (const rowText of existing) void hydrateSolidIsland(decodeSolidIslandRow(rowText))
 
-  const pending: string[] = []
-  window.__RARI_SOLID_ISLANDS__ = new Proxy(pending, {
-    get(target, prop, receiver) {
-      if (prop === 'push') {
-        return (...rows: string[]) => {
-          for (const rowText of rows) void hydrateSolidIsland(decodeSolidIslandRow(rowText))
-          return Reflect.get(target, prop, receiver).apply(target, rows)
-        }
-      }
-      return Reflect.get(target, prop, receiver)
-    },
-  }) as unknown as string[]
+  const rows: string[] = []
+  const hydrateRows = (incoming: readonly string[]): number => {
+    for (const rowText of incoming) void hydrateSolidIsland(decodeSolidIslandRow(rowText))
+    // The instance's own `push` is replaced below, so call the real one explicitly.
+    return Array.prototype.push.apply(rows, [...incoming])
+  }
+  window.__RARI_SOLID_ISLANDS__ = Object.assign(rows, { push: hydrateRows })
 }

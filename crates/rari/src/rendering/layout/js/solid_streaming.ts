@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/prefer-readonly-parameter-types, typescript/non-nullable-type-assertion-style -- Rust-embedded script: bare `import()` of vendored Solid modules and `g` globals are untyped at this boundary */
 /// <reference path="../../types.d.ts" />
 
 /**
@@ -35,9 +36,7 @@ async function renderSolidToHtml(componentId: string, propsExpr?: string): Promi
 
   const props = propsExpr != null && propsExpr !== '' ? deserialize(propsExpr) : {}
 
-  return solidWeb.renderToString(() =>
-    createComponent(component as (p: unknown) => unknown, props),
-  )
+  return solidWeb.renderToString(() => createComponent(component as (p: unknown) => unknown, props))
 }
 
 g.renderSolidToHtml = renderSolidToHtml
@@ -135,7 +134,9 @@ async function renderSolidToHtmlStreaming(
     }
 
     try {
-      solidWeb.renderToStream(() => createComponent(component as (p: unknown) => unknown, props)).pipe(writable)
+      solidWeb
+        .renderToStream(() => createComponent(component as (p: unknown) => unknown, props))
+        .pipe(writable)
     } catch (e) {
       reject(e instanceof Error ? e : new Error(String(e)))
     }

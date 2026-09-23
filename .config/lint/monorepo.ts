@@ -106,7 +106,7 @@ export const monorepoEslintConfigs: Linter.Config[] = [
     },
   },
   {
-    files: ['tools/bundle-react-esm/*.ts'],
+    files: ['tools/bundle-react-esm/*.ts', 'tools/bundle-solid-esm/*.ts'],
     rules: {
       'no-console': 'off',
     },
@@ -135,7 +135,7 @@ export const monorepoLint: OxlintConfig = {
   overrides: [
     ...(rariLint.overrides ?? []),
     {
-      files: ['tools/bundle-react-esm/*.ts'],
+      files: ['tools/bundle-react-esm/*.ts', 'tools/bundle-solid-esm/*.ts'],
       rules: {
         'no-console': 'off',
       },

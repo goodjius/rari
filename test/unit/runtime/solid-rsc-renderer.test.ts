@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
 import { decodeSolidIslandRow } from '@rari/runtime/entry-client-solid'
+import { beforeEach, describe, expect, it } from 'vite-plus/test'
 
 // solid_rsc_renderer.ts is a Rust-embedded script (executed via
 // JsRuntimeInterface::execute_script inside V8, not bundled by Vite), so it
@@ -12,9 +12,8 @@ declare global {
 }
 
 beforeEach(async () => {
-  await import(
-    '../../../crates/rari/src/rendering/base/js/solid_rsc_renderer.ts'
-  )
+  // @ts-expect-error - Rust-embedded script: no exports, and a .ts import path
+  await import('../../../crates/rari/src/rendering/base/js/solid_rsc_renderer.ts')
 })
 
 // renderToSolidRsc's single-row format (no props, no islands) is a
@@ -64,8 +63,8 @@ describe('decodeSolidIslandRow', () => {
   })
 
   it('rejects malformed row payloads missing required fields', () => {
-    expect(() =>
-      decodeSolidIslandRow('I0:{"moduleId":"x","exportName":"default"}'),
-    ).toThrow('Malformed Solid island row payload')
+    expect(() => decodeSolidIslandRow('I0:{"moduleId":"x","exportName":"default"}')).toThrow(
+      'Malformed Solid island row payload',
+    )
   })
 })

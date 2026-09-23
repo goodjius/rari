@@ -103,6 +103,10 @@
       "types": "./dist/runtime/entry-client.d.mts",
       "default": "./dist/runtime/entry-client.mjs"
     },
+    "./runtime/entry-client-solid": {
+      "types": "./dist/runtime/entry-client-solid.d.mts",
+      "default": "./dist/runtime/entry-client-solid.mjs"
+    },
     "./runtime/rsc-references": {
       "types": "./dist/runtime/rsc-references.d.mts",
       "default": "./dist/runtime/rsc-references.mjs"
@@ -147,20 +151,36 @@
     "update-react-refresh-runtime": "node ./scripts/update-react-refresh-runtime.ts"
   },
   "peerDependencies": {
+    "@babel/core": "catalog:solid",
     "@mdx-js/mdx": "catalog:mdx",
     "@rari/use-cache": "catalog:rari",
+    "babel-preset-solid": "catalog:solid",
     "oxc-transform-react": "catalog:build",
     "react": "catalog:react",
-    "react-dom": "catalog:react"
+    "react-dom": "catalog:react",
+    "solid-js": "catalog:solid",
+    "solid-refresh": "catalog:solid"
   },
   "peerDependenciesMeta": {
+    "@babel/core": {
+      "optional": true
+    },
     "@mdx-js/mdx": {
       "optional": true
     },
     "@rari/use-cache": {
       "optional": true
     },
+    "babel-preset-solid": {
+      "optional": true
+    },
     "oxc-transform-react": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    },
+    "solid-refresh": {
       "optional": true
     }
   },
@@ -178,16 +198,20 @@
     "rari-win32-x64": "0.15.17"
   },
   "devDependencies": {
+    "@babel/core": "catalog:solid",
     "@mdx-js/mdx": "catalog:mdx",
     "@rari/deploy": "workspace:*",
     "@rari/logger": "workspace:*",
     "@rari/use-cache": "workspace:*",
+    "@types/babel__core": "catalog:solid",
     "@types/node": "catalog:typescript",
     "@types/react": "catalog:react",
     "@types/react-dom": "catalog:react",
+    "babel-preset-solid": "catalog:solid",
     "oxc-transform-react": "catalog:build",
     "seroval": "catalog:solid",
     "solid-js": "catalog:solid",
+    "solid-refresh": "catalog:solid",
     "typescript": "catalog:typescript",
     "typescript-7": "catalog:typescript",
     "vite-plus": "catalog:build"

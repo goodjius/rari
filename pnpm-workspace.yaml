@@ -44,6 +44,7 @@ catalogs:
     eslint-plugin-pnpm: ^1.9.1
     eslint-plugin-react-refresh: ^0.5.7
     eslint-plugin-regexp: ^3.3.1
+    eslint-plugin-solid: ^0.18.0
     eslint-plugin-unused-imports: ^4.4.1
     eslint-plugin-yml: ^3.8.1
     jsonc-eslint-parser: ^3.3.0
@@ -70,8 +71,12 @@ catalogs:
     react-dom: ^19.3.0
     react-server-dom-webpack: ^19.3.0
   solid:
+    '@babel/core': ^7.29.7
+    '@types/babel__core': ^7.20.5
+    babel-preset-solid: ^1.9.15
     seroval: ^1.5.6
     solid-js: ^1.9.15
+    solid-refresh: ^0.7.8
   stylex:
     '@stylexjs/stylex': ^0.19.1
     '@stylexjs/unplugin': ^0.19.1
@@ -80,6 +85,7 @@ catalogs:
     tailwindcss: ^4.3.3
   testing:
     '@playwright/test': ^1.63.0
+    jsdom: ^30.1.1
     '@vitest/coverage-v8': ^5.0.1
   typescript:
     '@types/node': ^26.6.2

@@ -1,4 +1,5 @@
 import type { OxlintConfig } from 'vite-plus/lint'
+import { reactOnlyRules, solidGlobs } from './globs'
 import { ignorePatterns } from './ignores'
 
 export const lint: OxlintConfig = {
@@ -833,6 +834,11 @@ export const lint: OxlintConfig = {
       rules: {
         'react/only-export-components': 'off',
       },
+      plugins: ['react'],
+    },
+    {
+      files: solidGlobs,
+      rules: Object.fromEntries(reactOnlyRules.map(name => [`react/${name}`, 'off'] as const)),
       plugins: ['react'],
     },
   ],

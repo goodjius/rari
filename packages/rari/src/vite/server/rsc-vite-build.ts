@@ -145,6 +145,10 @@ const RSC_EXTERNALS = [
   'react/compiler-runtime',
   /^rari(?:\/|$)/,
   'react-server-dom-rari/server',
+  // Solid apps: the Rust runtime resolves these bare specifiers to its vendored
+  // bundles (crates/rari/src/runtime/module_loader/solid_vendor.rs).
+  /^solid-js(?:\/|$)/,
+  'seroval',
 ] as const
 
 const SSR_EXTERNALS = [
@@ -157,6 +161,8 @@ const SSR_EXTERNALS = [
   /^rari(?:\/|$)/,
   'react-server-dom-webpack/client',
   /^react-server-dom-webpack\//,
+  /^solid-js(?:\/|$)/,
+  'seroval',
 ] as const
 
 type EnvBuildSnapshot = Readonly<{

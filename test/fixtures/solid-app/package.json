@@ -1,0 +1,23 @@
+{
+  "name": "@test/solid-app",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "rari dev",
+    "build": "rari build",
+    "start": "rari start",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "rari": "workspace:*",
+    "seroval": "catalog:solid",
+    "solid-js": "catalog:solid"
+  },
+  "devDependencies": {
+    "@babel/core": "catalog:solid",
+    "babel-preset-solid": "catalog:solid",
+    "solid-refresh": "catalog:solid",
+    "typescript-7": "catalog:typescript",
+    "vite": "catalog:build"
+  }
+}

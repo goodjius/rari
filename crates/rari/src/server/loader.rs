@@ -996,6 +996,39 @@ impl ComponentLoader {
         Ok(())
     }
 
+    /// Loads `dist/server/solid-island-manifest.json` (written by
+    /// packages/rari/src/vite/server/build.ts for `framework: 'solid'` apps)
+    /// into `globalThis['~rari'].solidIslandManifest`. Mirrors
+    /// `load_client_reference_manifest`; a missing file is not an error since
+    /// React apps never have one.
+    pub async fn load_solid_island_manifest(
+        runtime: &Arc<JsExecutionRuntime>,
+    ) -> Result<(), RariError> {
+        let manifest_path = Path::new(DIST_DIR).join("server").join("solid-island-manifest.json");
+        if !fs::try_exists(&manifest_path).await.unwrap_or(false) {
+            return Ok(());
+        }
+
+        let manifest_content = fs::read_to_string(&manifest_path)
+            .await
+            .map_err(|e| RariError::io(format!("Failed to read Solid island manifest: {e}")))?;
+
+        let init_script = format!(
+            r"(function() {{
+                if (!globalThis['~rari']) {{
+                    globalThis['~rari'] = {{}};
+                }}
+                globalThis['~rari'].solidIslandManifest = {manifest_content};
+            }})()"
+        );
+
+        runtime.broadcast_script("init_solid_island_manifest", &init_script).await.map_err(|e| {
+            RariError::internal(format!("Failed to initialize Solid island manifest: {e}"))
+        })?;
+
+        Ok(())
+    }
+
     async fn init_use_cache_build_id(
         renderer: &RscRenderer,
         manifest: &Value,

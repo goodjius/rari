@@ -1,0 +1,9 @@
+{
+  "extends": "../../../.config/typescript/solid-app.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src"]
+}

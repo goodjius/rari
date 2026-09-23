@@ -58,6 +58,7 @@
     "eslint-plugin-perfectionist": "catalog:lint",
     "eslint-plugin-pnpm": "catalog:lint",
     "eslint-plugin-react-refresh": "catalog:lint",
+    "eslint-plugin-solid": "catalog:lint",
     "eslint-plugin-regexp": "catalog:lint",
     "eslint-plugin-unused-imports": "catalog:lint",
     "eslint-plugin-yml": "catalog:lint",

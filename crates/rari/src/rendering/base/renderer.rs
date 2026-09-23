@@ -1777,4 +1777,105 @@ mod solid_poc_tests {
 
         Ok(())
     }
+    /// Locates a build output file under `test/fixtures/solid-app/dist/server`
+    /// by `<dir>/<prefix>*.js` (build output names are content-hashed).
+    /// Produced by `just build-solid-fixture`.
+    fn solid_app_dist_file(dir: &str, prefix: &str) -> Result<(String, String), RariError> {
+        let dir_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/fixtures/solid-app/dist/server")
+            .join(dir);
+        let entries = std::fs::read_dir(&dir_path).map_err(|e| {
+            RariError::io(format!(
+                "Solid fixture build output missing at {} ({e}) - run `just build-solid-fixture` first",
+                dir_path.display()
+            ))
+        })?;
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(prefix) && name.ends_with(".js") {
+                let source = std::fs::read_to_string(entry.path())
+                    .map_err(|e| RariError::io(format!("Failed to read {name}: {e}")))?;
+                return Ok((name, source));
+            }
+        }
+        Err(RariError::io(format!(
+            "No {prefix}*.js in {} - run `just build-solid-fixture` first",
+            dir_path.display()
+        )))
+    }
+
+    /// Registers a built fixture module under a synthetic absolute specifier,
+    /// rewriting its `../components/` relative imports to absolute ones
+    /// (modules injected via `add_module_to_loader` have no base URL for
+    /// relative imports - see page-with-island.ts).
+    async fn register_solid_app_module(
+        renderer: &RscRenderer,
+        dir: &str,
+        prefix: &str,
+    ) -> Result<String, RariError> {
+        let (name, source) = solid_app_dist_file(dir, prefix)?;
+        let source =
+            source.replace("\"../components/", "\"file:///rari_component/solid-app/components/");
+        let specifier = format!("file:///rari_component/solid-app/{dir}/{name}");
+        renderer.runtime.add_module_to_loader(&specifier, source).await?;
+        Ok(specifier)
+    }
+
+    /// The JSX-authored fixture app (test/fixtures/solid-app, built by the
+    /// real Vite pipeline with the Solid compiler plugin in `ssr` mode)
+    /// renders correctly through the real V8 streaming path: server-only
+    /// markup, props, the `'use client'` Counter wrapped as an island (with
+    /// its row), and a Suspense boundary that streams fallback-then-value.
+    #[tokio::test]
+    async fn streams_the_jsx_compiled_solid_fixture_app() -> Result<(), RariError> {
+        let runtime = Arc::new(JsExecutionRuntime::with_pool_size(None, 1));
+        let renderer = RscRenderer::new(runtime);
+
+        register_solid_app_module(&renderer, "components", "AsyncData_").await?;
+        register_solid_app_module(&renderer, "components", "Greeting_").await?;
+        let page = register_solid_app_module(&renderer, "app", "page_").await?;
+
+        let (tx, mut rx) = mpsc::channel::<Result<Vec<u8>, RariError>>(16);
+        let render = renderer.render_solid_component_to_html_streaming(
+            &page,
+            "solid_app_page",
+            &Value::Null,
+            "solid-app-page".to_string(),
+            tx,
+        );
+        let drain = async {
+            let mut chunks: Vec<String> = Vec::new();
+            while let Some(chunk) = rx.recv().await {
+                chunks.push(String::from_utf8_lossy(&chunk?).into_owned());
+            }
+            Ok::<_, RariError>(chunks)
+        };
+        let (render_result, chunks_result) = tokio::join!(render, drain);
+        render_result?;
+        let chunks = chunks_result?;
+        let full = chunks.concat();
+
+        assert!(full.contains("server-only content"), "got: {full}");
+        assert!(full.contains("World"), "expected the Greeting prop, got: {full}");
+        assert!(full.contains(r#"data-rari-island="island-0""#), "got: {full}");
+        assert!(full.contains("clicks"), "expected the island's SSR content, got: {full}");
+        assert!(
+            full.contains("src/components/Counter.tsx"),
+            "expected the island row's moduleId, got: {full}"
+        );
+        assert!(full.contains("window.__RARI_SOLID_ISLANDS__"), "got: {full}");
+        assert!(full.contains("Loading..."), "expected the Suspense fallback, got: {full}");
+        assert!(full.contains("resolved-value"), "expected the streamed value, got: {full}");
+
+        let fallback = chunks.iter().position(|c| c.contains("Loading..."));
+        let resolved = chunks.iter().position(|c| c.contains("resolved-value"));
+        match (fallback, resolved) {
+            (Some(f), Some(r)) => {
+                assert!(f < r, "fallback must stream before the resolved value: {chunks:?}");
+            }
+            _ => panic!("expected fallback and resolved chunks, got: {chunks:?}"),
+        }
+
+        Ok(())
+    }
 }

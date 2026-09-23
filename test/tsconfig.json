@@ -11,5 +11,6 @@
     },
     "types": ["node", "react"]
   },
-  "include": ["**/*.ts", "**/*.tsx", "../packages/rari/src/ambient.d.ts"]
+  "include": ["**/*.ts", "**/*.tsx", "../packages/rari/src/ambient.d.ts"],
+  "exclude": ["solid/**", "fixtures/solid-app/**", "fixtures/solid-poc-app/**"]
 }

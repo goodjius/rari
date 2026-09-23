@@ -181,6 +181,7 @@ export interface ServerBuildOptions {
     readonly useCacheRemote?: ServerCacheLayerConfig
   }
   readonly mdx?: MdxPluginOptions
+  readonly framework?: 'react' | 'solid'
 }
 
 export interface ComponentRebuildResult {
@@ -205,6 +206,7 @@ type ResolvedServerBuildOptions = Required<
     | 'experimental'
     | 'moduleAnalysisCache'
     | 'mdx'
+    | 'framework'
   >
 > & {
   serverConfigPath: string
@@ -216,6 +218,7 @@ type ResolvedServerBuildOptions = Required<
   origin?: ServerBuildOptions['origin']
   htmlLimitedBots?: ServerBuildOptions['htmlLimitedBots']
   define?: ServerBuildOptions['define']
+  framework: NonNullable<ServerBuildOptions['framework']>
   experimental?: ServerBuildOptions['experimental']
   moduleAnalysisCache?: ModuleAnalysisCache
   mdx?: ServerBuildOptions['mdx']
@@ -506,6 +509,7 @@ export class ServerComponentBuilder {
       htmlLimitedBots: options.htmlLimitedBots,
       experimental: options.experimental,
       mdx: options.mdx,
+      framework: options.framework ?? 'react',
     }
   }
 
@@ -1112,6 +1116,17 @@ export class ServerComponentBuilder {
       JSON.stringify(clientReferenceManifest),
       'utf-8',
     )
+
+    if (this.options.framework === 'solid') {
+      // Same `id#export -> { id, chunks, name }` shape as the React manifest, but a
+      // separate file: it means something different operationally (islands, not
+      // Flight import rows) - see crates/rari/src/rendering/base/js/solid_islands.ts.
+      await fs.promises.writeFile(
+        path.join(serverOutDir, 'solid-island-manifest.json'),
+        JSON.stringify(clientReferenceManifest),
+        'utf-8',
+      )
+    }
   }
 
   private resolveExternalClientSourcePath(

@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/prefer-readonly-parameter-types, typescript/non-nullable-type-assertion-style -- Rust-embedded script: bare `import()` of vendored Solid modules and `g` globals are untyped at this boundary */
 /// <reference path="../../types.d.ts" />
 
 /**
@@ -20,6 +21,7 @@ function encodeSolidComponentReferenceRow(row: SolidComponentReferenceRow): stri
   return `I0:${JSON.stringify(row)}\n`
 }
 
+// oxlint-disable-next-line typescript/require-await -- called through the async execute_function contract
 async function renderToSolidRsc(moduleId: string, exportName = 'default'): Promise<string> {
   return encodeSolidComponentReferenceRow({ moduleId, exportName })
 }
