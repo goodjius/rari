@@ -18,7 +18,17 @@
  * enhancement paths have no analog here, a known and flagged gap (see the
  * phase-2 plan's open questions), not silently dropped.
  */
-async function dispatchSolidServerAction(actionId: string, argsExpr: string): Promise<string> {
+interface SolidActionOutcome {
+  /** seroval expression of the envelope `{ v: result }`. */
+  readonly body: string
+  /** `result.redirect` (string or `{ destination }`), validated on the Rust side. */
+  readonly redirect: string | null
+}
+
+async function dispatchSolidServerAction(
+  actionId: string,
+  argsExpr: string,
+): Promise<SolidActionOutcome> {
   const { serialize, deserialize } = (await import('seroval')) as {
     serialize: (value: unknown) => string
     deserialize: (value: string) => unknown
@@ -31,7 +41,17 @@ async function dispatchSolidServerAction(actionId: string, argsExpr: string): Pr
   const actionFn = resolveActionFn(actionId, {})
   const result = await actionFn(...sanitizedArgs)
 
-  return serialize(result)
+  let redirect: string | null = null
+  if (result != null && typeof result === 'object' && 'redirect' in result) {
+    const target = result.redirect
+    if (typeof target === 'string') redirect = target
+    else if (target != null && typeof target === 'object' && 'destination' in target) {
+      const destination = target.destination
+      if (typeof destination === 'string') redirect = destination
+    }
+  }
+
+  return { body: serialize({ v: result }), redirect }
 }
 
 g.dispatchSolidServerAction = dispatchSolidServerAction

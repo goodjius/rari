@@ -1022,9 +1022,9 @@ impl ComponentLoader {
             }})()"
         );
 
-        runtime.broadcast_script("init_solid_island_manifest", &init_script).await.map_err(|e| {
-            RariError::internal(format!("Failed to initialize Solid island manifest: {e}"))
-        })?;
+        runtime.broadcast_script("init_solid_island_manifest", &init_script).await.map_err(
+            |e| RariError::internal(format!("Failed to initialize Solid island manifest: {e}")),
+        )?;
 
         Ok(())
     }

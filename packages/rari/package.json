@@ -79,6 +79,10 @@
       "types": "./dist/runtime/call-server.d.mts",
       "default": "./dist/runtime/call-server.mjs"
     },
+    "./runtime/solid-call-server": {
+      "types": "./dist/runtime/solid-call-server.d.mts",
+      "default": "./dist/runtime/solid-call-server.mjs"
+    },
     "./runtime/action-flight-refresh": {
       "types": "./dist/runtime/action-flight-refresh.d.mts",
       "default": "./dist/runtime/action-flight-refresh.mjs"

@@ -33,12 +33,14 @@ use crate::{
             },
             response::RouteCachePolicy,
         },
-        config::{CacheLayerConfig, Config},
+        config::{CacheLayerConfig, Config, Framework},
         middleware::request_context::RequestContext,
         routing::app_router::AppRouteMatch,
     },
     utils::path::path_to_file_url,
 };
+
+mod solid_core;
 
 const LAYOUT_KEY_PREFIX: &str = "layout:";
 
@@ -597,6 +599,19 @@ impl LayoutRenderer {
             && let Some(cached_html) = self.html_cache.get(cache_key).await
         {
             return Ok(RenderResult::Static(cached_html));
+        }
+
+        if !return_rsc_on_fallback
+            && Config::get().is_some_and(|config| config.framework == Framework::Solid)
+        {
+            return self
+                .render_solid_route_with_streaming(
+                    route_match,
+                    context,
+                    request_context,
+                    metadata_rx,
+                )
+                .await;
         }
 
         let loading_enabled = Config::get().map(|config| config.loading.enabled).unwrap_or(true);

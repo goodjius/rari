@@ -28,8 +28,7 @@ use sys_traits::impls::RealSys;
 use super::{
     cache::ModuleCaching,
     config::RuntimeConfig,
-    react_vendor,
-    solid_vendor,
+    react_vendor, solid_vendor,
     storage::ModuleStorage,
     stubs::{
         FALLBACK_MODULE_TEMPLATE, LOADER_STUB_TEMPLATE, RARI_CACHE_STUB, RARI_CALL_SERVER_STUB,

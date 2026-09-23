@@ -270,16 +270,28 @@ impl RscHtmlRenderer {
             }
         }
 
-        let _ = write!(
-            head,
-            r#"<script type="module">
+        // Solid's HMR needs no global preamble (solid-refresh's Babel plugin wires each
+        // module itself), so only React gets the refresh runtime. Mirrors
+        // packages/rari/src/vite/client-head.ts `buildDevClientHead`.
+        if !crate::server::config::Config::get()
+            .is_some_and(|config| config.framework == crate::server::config::Framework::Solid)
+        {
+            let _ = write!(
+                head,
+                r#"<script type="module">
 import {{ injectIntoGlobalHook }} from 'http://{host}:{vite_port}/@react-refresh'
 injectIntoGlobalHook(window)
 window.$RefreshReg$ = () => {{}}
 window.$RefreshSig$ = () => type => type
 window.__vite_plugin_react_preamble_installed__ = true
 </script>
-<script type="module" src="http://{host}:{vite_port}/@vite/client"></script>
+"#
+            );
+        }
+
+        let _ = write!(
+            head,
+            r#"<script type="module" src="http://{host}:{vite_port}/@vite/client"></script>
 <script type="module">
 import 'http://{host}:{vite_port}/@id/virtual:rari-entry-client';
 </script>

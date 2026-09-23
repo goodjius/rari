@@ -607,10 +607,17 @@ function locateInlineUseServerActions(source: string): LocatedAction[] {
   return actions
 }
 
+export interface InlineServerActionOptions {
+  /** Solid resolves actions by plain named export; captured variables are rejected. */
+  readonly solid?: boolean
+}
+
 export function transformInlineServerActions(
   code: string,
   moduleId: string,
+  options: InlineServerActionOptions = {},
 ): InlineServerActionTransformResult | null {
+  const solid = options.solid === true
   const actions = locateInlineUseServerActions(code)
   if (actions.length === 0) return null
 
@@ -632,6 +639,12 @@ export function transformInlineServerActions(
 
     const body = stripUseServerPrologue(result, action.bodyOpen, action.bodyClose)
     const freeVars = collectFreeVars(body, action.paramsRaw, moduleBindings)
+    if (solid && freeVars.length > 0) {
+      throw new Error(
+        `[rari] Inline server action "${originalName}" in ${moduleId} captures ${freeVars.join(', ')} from its enclosing scope. ` +
+          'Solid server actions cannot capture variables yet: move the action to module scope or pass the values as arguments.',
+      )
+    }
     const params = [...freeVars, action.paramsRaw.trim()].filter(p => p !== '').join(', ')
     const asyncKw = action.isAsync ? 'async ' : ''
 
@@ -646,6 +659,29 @@ export function transformInlineServerActions(
 
     let replacement = bindExpr
     let rewrittenExport: string | null = null
+
+    if (solid) {
+      if (exportKind === 'default') {
+        rewrittenExport = 'default'
+        replacement = `export default ${hoistedName}`
+      } else if (exportKind === 'named' && action.name != null) {
+        rewrittenExport = action.name
+        replacement = `export const ${action.name} = ${hoistedName}`
+      } else if (exportKind === 'named' && bindingName != null) {
+        rewrittenExport = bindingName
+        replacement = hoistedName
+      } else if (action.kind === 'declaration' && action.name != null) {
+        replacement = `const ${action.name} = ${hoistedName}`
+      } else {
+        replacement = hoistedName
+      }
+      hoisted.unshift(
+        `${rewrittenExport == null ? 'export ' : ''}${asyncKw}function ${hoistedName}(${params}) {\n${body}\n}`,
+      )
+      if (rewrittenExport != null) rewrittenExportNames.unshift(rewrittenExport)
+      result = result.slice(0, replaceStart) + replacement + result.slice(action.end)
+      continue
+    }
 
     if (exportKind === 'default') {
       // Cover declaration and arrow/default forms; register under "default" once.
@@ -677,6 +713,10 @@ export function transformInlineServerActions(
     needsRegisterImport = true
 
     result = result.slice(0, replaceStart) + replacement + result.slice(action.end)
+  }
+
+  if (solid) {
+    return { code: `${result}\n\n${hoisted.join('\n')}\n`, actionNames, rewrittenExportNames }
   }
 
   const registerImport = needsRegisterImport

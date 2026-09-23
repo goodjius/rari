@@ -195,3 +195,26 @@ export const save = async (formData) => {
     )
   })
 })
+
+describe('transformInlineServerActions (solid)', () => {
+  it('hoists exported inline actions as plain exports without registerServerReference', () => {
+    const result = transformInlineServerActions(
+      `export async function save(x) { 'use server'\n return x }\n`,
+      'mod',
+      { solid: true },
+    )
+    expect(result?.code).not.toContain('registerServerReference')
+    expect(result?.code).toContain('export const save = $$ACTION_0_save')
+    expect(result?.rewrittenExportNames).toEqual(['save'])
+  })
+
+  it('rejects actions that capture enclosing variables', () => {
+    expect(() =>
+      transformInlineServerActions(
+        `export function Page() { const id = 1\n async function act() { 'use server'\n return id }\n return act }\n`,
+        'mod',
+        { solid: true },
+      ),
+    ).toThrow(/captures id/)
+  })
+})

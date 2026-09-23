@@ -71,12 +71,14 @@ pub const SOLID_STREAMING_SCRIPT: &str = include_str!("../layout/js/solid_stream
 pub const SOLID_COMPONENT_LOADER_SCRIPT: &str = include_str!("js/solid_component_loader.ts");
 pub const SOLID_PROPS_CODEC_SCRIPT: &str = include_str!("js/solid_props_codec.ts");
 pub const SOLID_ISLANDS_SCRIPT: &str = include_str!("js/solid_islands.ts");
+pub const SOLID_ROUTE_SCRIPT: &str = include_str!("../layout/js/solid_route.ts");
 
 pub const SOLID_PIPELINE_READY_CHECK: &str = "typeof globalThis.renderSolidToHtml === 'function' \
         && typeof globalThis.renderToSolidRsc === 'function' \
         && typeof globalThis.registerSolidComponent === 'function' \
         && typeof globalThis.encodeSolidProps === 'function' \
         && typeof globalThis.renderSolidIsland === 'function' \
+        && typeof globalThis.renderSolidRouteStreaming === 'function' \
         && typeof globalThis.resetSolidIslandState === 'function'";
 
 pub const STREAMING_PIPELINE_READY_CHECK: &str = "typeof globalThis['~rari']?.renderStreamingDocument === 'function' \

@@ -50,14 +50,17 @@ interface RenderToStreamResult {
   pipe: (writable: SolidStreamWritable) => void
 }
 
+/** Optional per-chunk rewriting between Solid's stream and the byte ops (see solid_route.ts). */
+interface SolidStreamTransform {
+  write: (text: string) => string
+  end: () => string
+}
+
 /**
- * Streaming SSR with native Suspense boundary reveal, via `solid-js/web`'s
- * `renderToStream`. Solid already does the hard part here (fallback-first,
- * `<template>`-swap reveal, resource-data serialization for hydration -
- * see the phase-2 plan) - this function's only job is adapting its
- * `pipe({write, end})` callback interface onto the existing generic
- * `op_fizz_chunk*` ops (`crates/rari/src/runtime/ops.rs`), which are raw
- * byte passthrough with zero HTML assumptions and need no changes.
+ * Adapts `solid-js/web`'s `renderToStream(...).pipe({write, end})` callback
+ * interface onto the generic `op_fizz_chunk*` ops
+ * (`crates/rari/src/runtime/ops.rs`: raw byte passthrough, zero HTML
+ * assumptions, no changes needed).
  *
  * `write` is called synchronously by Solid, but `op_fizz_chunk`'s
  * backpressure fallback is async - so this can't just forward each write
@@ -65,28 +68,15 @@ interface RenderToStreamResult {
  * pump, with explicit completion tracking via `end()` (which `renderToStream`
  * calls itself exactly once, after every tracked Suspense resource has
  * settled - not just after the initial shell).
+ *
+ * Top-level function declaration (a global in this script context) so
+ * solid_route.ts can reuse it.
  */
-async function renderSolidToHtmlStreaming(
-  componentId: string,
+async function rariSolidPipeToOps(
   streamId: string,
-  propsExpr?: string,
+  produce: (writable: SolidStreamWritable) => void,
+  transform?: SolidStreamTransform,
 ): Promise<void> {
-  const solidWeb = (await import('solid-js/web')) as {
-    renderToStream: (fn: () => unknown) => RenderToStreamResult
-  }
-  const { createComponent } = (await import('solid-js')) as {
-    createComponent: (comp: (props: unknown) => unknown, props: unknown) => unknown
-  }
-  const { deserialize } = (await import('seroval')) as {
-    deserialize: (value: string) => unknown
-  }
-
-  const component = (g as Record<string, unknown>)[componentId]
-  if (typeof component !== 'function')
-    throw new Error(`[rari] Solid component not loaded: ${componentId}`)
-
-  const props = propsExpr != null && propsExpr !== '' ? deserialize(propsExpr) : {}
-
   const queue: string[] = []
   let pumping = false
   let ended = false
@@ -124,22 +114,52 @@ async function renderSolidToHtmlStreaming(
 
     const writable: SolidStreamWritable = {
       write(text: string) {
-        if (text) queue.push(text)
+        const out = transform != null ? transform.write(text) : text
+        if (out) queue.push(out)
         void pump()
       },
       end() {
+        const tail = transform != null ? transform.end() : ''
+        if (tail) queue.push(tail)
         ended = true
         void pump()
       },
     }
 
     try {
-      solidWeb
-        .renderToStream(() => createComponent(component as (p: unknown) => unknown, props))
-        .pipe(writable)
+      produce(writable)
     } catch (e) {
       reject(e instanceof Error ? e : new Error(String(e)))
     }
+  })
+}
+
+/** Streaming SSR of a single registered component with native Suspense reveal. */
+async function renderSolidToHtmlStreaming(
+  componentId: string,
+  streamId: string,
+  propsExpr?: string,
+): Promise<void> {
+  const solidWeb = (await import('solid-js/web')) as {
+    renderToStream: (fn: () => unknown) => RenderToStreamResult
+  }
+  const { createComponent } = (await import('solid-js')) as {
+    createComponent: (comp: (props: unknown) => unknown, props: unknown) => unknown
+  }
+  const { deserialize } = (await import('seroval')) as {
+    deserialize: (value: string) => unknown
+  }
+
+  const component = (g as Record<string, unknown>)[componentId]
+  if (typeof component !== 'function')
+    throw new Error(`[rari] Solid component not loaded: ${componentId}`)
+
+  const props = propsExpr != null && propsExpr !== '' ? deserialize(propsExpr) : {}
+
+  await rariSolidPipeToOps(streamId, writable => {
+    solidWeb
+      .renderToStream(() => createComponent(component as (p: unknown) => unknown, props))
+      .pipe(writable)
   })
 }
 

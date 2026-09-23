@@ -789,6 +789,8 @@ export class ServerComponentBuilder {
     if (this.options.cache) serverConfig.cache = this.options.cache
     if (this.options.action) serverConfig.action = this.options.action
     if (this.options.jsPoolSize != null) serverConfig.jsPoolSize = this.options.jsPoolSize
+    // Read by the Rust server (crates/rari/src/server/config.rs) to pick the render pipeline.
+    if (this.options.framework === 'solid') serverConfig.framework = 'solid'
     const origin = this.options.origin?.trim().replace(/\/+$/, '')
     if (origin != null && origin !== '') serverConfig.origin = origin
     if (this.options.htmlLimitedBots != null)

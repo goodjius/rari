@@ -46,7 +46,7 @@ use crate::{
         },
         cache::response,
         compression::{CompressionEncoding, compress_body, compress_stream},
-        config::Config,
+        config::{Config, Framework},
         core::{
             types::request::{RenderMode, RequestTypeDetector},
             utils::{
@@ -1150,7 +1150,14 @@ pub async fn handle_app_route(
             ))),
     );
 
-    let render_mode = RequestTypeDetector::detect_render_mode(&headers);
+    // Solid apps never send `Accept: text/x-component` (their client entry has no
+    // Flight router); serve HTML regardless so a stray header can't hit the React-only
+    // RSC navigation path.
+    let render_mode = if state.config.framework == Framework::Solid {
+        RenderMode::Ssr
+    } else {
+        RequestTypeDetector::detect_render_mode(&headers)
+    };
     let accept_encoding = headers.get("accept-encoding").and_then(|v| v.to_str().ok());
 
     let cookie_header = request_cookie_header(&headers);

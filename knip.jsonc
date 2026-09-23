@@ -7,8 +7,7 @@
       // Hand-authored SSR-only fixtures loaded by Rust tests through the module loader.
       "ignore": ["test/fixtures/solid-poc-app/**"],
       "ignoreDependencies": [
-        "jsdom", // vitest `environment: 'jsdom'` in test/solid/vite.config.ts
-        "seroval" // imported by Rust-embedded scripts under crates/, resolved via the vendored bundle at runtime
+        "jsdom" // vitest `environment: 'jsdom'` in test/solid/vite.config.ts
       ]
     },
     "packages/rari": {

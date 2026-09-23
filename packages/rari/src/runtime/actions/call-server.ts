@@ -3,8 +3,9 @@ import {
   createTemporaryReferenceSet,
   encodeReply,
 } from 'virtual:react-flight-client'
-import { isError, isRecord } from '@/shared/utils/type-guards'
+import { isRecord } from '@/shared/utils/type-guards'
 import { serializeRouterState } from '../flight/serialize-router-state'
+import { applyRedirect, postAction, readActionRedirect } from './action-transport'
 import { scheduleActionFlightRefresh } from './flight-refresh'
 
 interface ActionFlightResponse {
@@ -12,34 +13,11 @@ interface ActionFlightResponse {
   f?: unknown
 }
 
-const ACTION_REQUEST_TIMEOUT_MS = 30_000
-
 function stripInternalActionMetadata(result: unknown): unknown {
   if (!isRecord(result)) return result
 
   const { '~rariSkipRefresh': _skipRefresh, ...rest } = result
   return rest
-}
-
-function actionPostUrl(): string {
-  if (typeof window !== 'undefined') return window.location.pathname + window.location.search
-
-  return '/'
-}
-
-const ALLOWED_REDIRECT_PROTOCOLS = new Set(['http:', 'https:'])
-
-function applyRedirect(redirect: string) {
-  if (typeof window === 'undefined') return
-
-  try {
-    const absoluteRedirect = new URL(redirect, window.location.href)
-    if (!ALLOWED_REDIRECT_PROTOCOLS.has(absoluteRedirect.protocol)) return
-
-    if (absoluteRedirect.href !== window.location.href) window.location.href = absoluteRedirect.href
-  } catch {
-    // Ignore malformed redirect targets.
-  }
 }
 
 export async function callServer(id: string, args: readonly unknown[]): Promise<unknown> {
@@ -59,31 +37,13 @@ export async function callServer(id: string, args: readonly unknown[]): Promise<
     body = encoded
   }
 
-  let response: Response
-  try {
-    response = await fetch(actionPostUrl(), {
-      method: 'POST',
-      headers,
-      body,
-      signal: AbortSignal.timeout(ACTION_REQUEST_TIMEOUT_MS),
-    })
-  } catch (error) {
-    if (
-      (error instanceof DOMException && error.name === 'TimeoutError') ||
-      (isError(error) && error.name === 'AbortError')
-    ) {
-      throw new Error(`Server action "${id}" timed out after ${ACTION_REQUEST_TIMEOUT_MS}ms`)
-    }
+  const response = await postAction(id, headers, body)
 
-    throw error
-  }
+  const redirectLocation = readActionRedirect(response)
+  if (redirectLocation != null) {
+    if (redirectLocation !== '') applyRedirect(redirectLocation)
 
-  const redirectHeader = response.headers.get('x-action-redirect')
-  if (redirectHeader != null && redirectHeader !== '') {
-    const [location = ''] = redirectHeader.split(';')
-    if (location !== '') applyRedirect(location)
-
-    return { redirect: location }
+    return { redirect: redirectLocation }
   }
 
   const contentTypeHeader = response.headers.get('content-type')

@@ -27,12 +27,12 @@
     "@types/node": "catalog:typescript",
     "@types/react": "catalog:react",
     "@vitest/coverage-v8": "catalog:testing",
-    "jsdom": "catalog:testing",
-    "seroval": "catalog:solid",
-    "solid-js": "catalog:solid",
     "eslint": "catalog:lint",
+    "jsdom": "catalog:testing",
     "knip": "catalog:lint",
     "react": "catalog:react",
+    "seroval": "catalog:solid",
+    "solid-js": "catalog:solid",
     "typescript": "catalog:typescript",
     "vite-plus": "catalog:build"
   }

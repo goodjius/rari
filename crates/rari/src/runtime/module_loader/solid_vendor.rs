@@ -13,8 +13,7 @@
 //! crates/rari/src/rendering/base/js/solid_props_codec.ts). Does not cover
 //! `solid-js/store` or any router/meta packages.
 
-const VENDOR_MODULES: &[&str] =
-    &["solid-js.js", "solid-js-web.js", "solid-js-h.js", "seroval.js"];
+const VENDOR_MODULES: &[&str] = &["solid-js.js", "solid-js-web.js", "solid-js-h.js", "seroval.js"];
 
 pub const NODE_VENDOR_PREFIX: &str = "node:rari/solid-vendor/";
 
@@ -41,13 +40,19 @@ mod tests {
     #[test]
     fn normalizes_bare_names_to_canonical_js_filenames() {
         assert_eq!(normalize_vendor_module_name("solid-js"), Some("solid-js.js".to_string()));
-        assert_eq!(normalize_vendor_module_name("solid-js-web"), Some("solid-js-web.js".to_string()));
+        assert_eq!(
+            normalize_vendor_module_name("solid-js-web"),
+            Some("solid-js-web.js".to_string())
+        );
         assert_eq!(normalize_vendor_module_name("solid-js-h"), Some("solid-js-h.js".to_string()));
     }
 
     #[test]
     fn normalizes_mjs_extension_to_js() {
-        assert_eq!(normalize_vendor_module_name("solid-js-web.mjs"), Some("solid-js-web.js".to_string()));
+        assert_eq!(
+            normalize_vendor_module_name("solid-js-web.mjs"),
+            Some("solid-js-web.js".to_string())
+        );
     }
 
     #[test]

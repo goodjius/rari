@@ -589,16 +589,15 @@ export function rari(
   }
 
   function transformServerModule(code: string, id: string, analysis: ModuleAnalysis): string {
-    // Solid actions are resolved by plain named export (action_fn_resolver.ts's
-    // resolveActionFn) - no registerServerReference wrapper, and inline
-    // ("use server" inside a function body) actions are not supported yet.
-    if (framework === 'solid') return code
-
     const projectRoot =
       options.projectRoot != null && options.projectRoot !== ''
         ? options.projectRoot
         : process.cwd()
     const moduleId = getComponentId(id, projectRoot)
+
+    // Solid actions resolve by plain named export - no registerServerReference wrapper.
+    if (framework === 'solid')
+      return transformInlineServerActions(code, moduleId, { solid: true })?.code ?? code
 
     const inlineTransformed = transformInlineServerActions(code, moduleId)
     let newCode = inlineTransformed?.code ?? code
@@ -677,15 +676,19 @@ if (import.meta.hot) {
 
       const moduleId = getComponentId(id, projectRoot)
 
-      let newCode = 'import { createServerReference } from "virtual:react-flight-client";\n'
-      newCode += 'import { callServer } from "rari/runtime/call-server";\n'
+      const isSolid = framework === 'solid'
+      let newCode = isSolid
+        ? 'import { createServerReference } from "rari/runtime/solid-call-server";\n'
+        : 'import { createServerReference } from "virtual:react-flight-client";\nimport { callServer } from "rari/runtime/call-server";\n'
+      const referenceArgs = isSolid ? '' : ', callServer'
 
       for (const name of exportedNames) {
         const refId = `${moduleId}#${name}`
         const refIdJson = JSON.stringify(refId)
         if (name === 'default')
-          newCode += `export default createServerReference(${refIdJson}, callServer);\n`
-        else newCode += `export const ${name} = createServerReference(${refIdJson}, callServer);\n`
+          newCode += `export default createServerReference(${refIdJson}${referenceArgs});\n`
+        else
+          newCode += `export const ${name} = createServerReference(${refIdJson}${referenceArgs});\n`
       }
 
       return newCode
@@ -1575,6 +1578,10 @@ ${clientTransformedCode}`
             ...(options.jsPoolSize != null &&
             (process.env.RARI_JS_POOL_SIZE == null || process.env.RARI_JS_POOL_SIZE === '')
               ? { RARI_JS_POOL_SIZE: String(options.jsPoolSize) }
+              : {}),
+            ...(framework === 'solid' &&
+            (process.env.RARI_FRAMEWORK == null || process.env.RARI_FRAMEWORK === '')
+              ? { RARI_FRAMEWORK: 'solid' }
               : {}),
             ...(origin != null && origin !== '' && (envOrigin == null || envOrigin === '')
               ? { RARI_ORIGIN: origin }

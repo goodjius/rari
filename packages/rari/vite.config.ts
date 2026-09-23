@@ -29,6 +29,7 @@ export default defineConfig({
       'mdx/registry': 'src/mdx/registry.ts',
       'headers': 'src/headers.ts',
       'runtime/call-server': 'src/runtime/actions/call-server.ts',
+      'runtime/solid-call-server': 'src/runtime/actions/solid-call-server.ts',
       'runtime/action-flight-refresh': 'src/runtime/actions/flight-refresh.ts',
       'runtime/merge-flight-refresh': 'src/runtime/flight/merge-refresh.ts',
       'runtime/flight-route-cache': 'src/runtime/flight/route-cache.ts',

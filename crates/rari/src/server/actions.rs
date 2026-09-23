@@ -27,6 +27,7 @@ use crate::{
     rendering::{
         base::{
             constants::{ACTION_FLIGHT_ENCODE_SCRIPT, ACTION_HANDLER_SCRIPT, GET_RSC_BINARY_B64},
+            renderer::{parse_solid_action_outcome, solid_action_script},
             run_with_renderer_result,
         },
         layout::{LayoutRenderer, create_layout_context},
@@ -35,7 +36,7 @@ use crate::{
     server::{
         ServerState,
         cache::revalidate::{invalidate_route_caches, invalidate_route_caches_on},
-        config::RedirectConfig,
+        config::{Framework, RedirectConfig},
         core::utils::http::{extract_headers, extract_search_params, is_origin_allowed},
         error_response,
         middleware::request_context::{PendingCookie, PendingCookieKey, RequestContext},
@@ -722,6 +723,17 @@ async fn handle_server_action_at_path(
         Arc::clone(&renderer.runtime)
     };
 
+    if state.config.framework == Framework::Solid {
+        return Ok(handle_solid_server_action(
+            &state,
+            &runtime,
+            &request_context,
+            action_id,
+            &body,
+        )
+        .await);
+    }
+
     let script = match build_action_script(action_id, content_type, &body) {
         Ok(script) => script,
         Err(e) => {
@@ -933,6 +945,88 @@ async fn handle_server_action_at_path(
         revalidated_path.as_deref(),
         &request_context.pending_cookies,
     ))
+}
+
+const SOLID_ACTION_CONTENT_TYPE: &str = "application/x-rari-seroval";
+
+async fn handle_solid_server_action(
+    state: &ServerState,
+    runtime: &Arc<crate::runtime::JsExecutionRuntime>,
+    request_context: &Arc<RequestContext>,
+    action_id: Option<&str>,
+    body: &Bytes,
+) -> Response {
+    let is_development = state.config.is_development();
+    let pending = Some(&*request_context.pending_cookies);
+
+    let Some(action_id) = action_id else {
+        return rpc_action_error_response(
+            &RariError::bad_request("Solid server actions require the rsc-action-id header"),
+            is_development,
+            pending,
+        );
+    };
+    let args_expr = match std::str::from_utf8(body) {
+        Ok(text) => text,
+        Err(_) => {
+            return rpc_action_error_response(
+                &RariError::bad_request("Action payload must be valid UTF-8"),
+                is_development,
+                pending,
+            );
+        }
+    };
+
+    let leased = match runtime.acquire_request_runtime(Arc::clone(request_context)).await {
+        Ok(leased) => leased,
+        Err(e) => {
+            tracing::error!("Failed to acquire JS runtime for server action: {}", e);
+            return rpc_action_error_response(&e, is_development, pending);
+        }
+    };
+
+    let outcome = match state.renderer.lock().await.ensure_solid_actions_pipeline().await {
+        Ok(()) => match solid_action_script(action_id, args_expr) {
+            Ok(script) => leased
+                .execute_script("solid_action_dispatch".to_string(), script)
+                .await
+                .and_then(|value| parse_solid_action_outcome(&value)),
+            Err(e) => Err(e),
+        },
+        Err(e) => Err(e),
+    };
+    if let Err(e) = leased.release().await {
+        tracing::error!("Failed to release action runtime lease: {}", e);
+    }
+
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            tracing::error!("Solid server action execution failed: {}", e);
+            return rpc_action_error_response(&e, is_development, pending);
+        }
+    };
+
+    let redirect_config = state.config.redirect_config();
+    let redirect = outcome
+        .redirect
+        .as_deref()
+        .and_then(|url| validate_redirect_url(url, &redirect_config).ok());
+    if let Some(ref redirect_url) = redirect {
+        invalidate_redirect_target_caches(state, redirect_url, None).await;
+    }
+
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, SOLID_ACTION_CONTENT_TYPE)
+        .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, private");
+    if let Some(redirect_url) = redirect {
+        builder = builder.header("x-action-redirect", format!("{redirect_url};push"));
+    }
+    #[expect(clippy::expect_used, reason = "Response::builder() with valid components never fails")]
+    let mut response = builder.body(Body::from(outcome.body)).expect("Valid action response");
+    append_pending_cookies(response.headers_mut(), &request_context.pending_cookies);
+    response
 }
 
 pub fn validate_redirect_url(url: &str, config: &RedirectConfig) -> Result<String, RariError> {

@@ -134,6 +134,11 @@ impl Server {
         let mut renderer =
             RscRenderer::with_resource_limits(Arc::clone(&js_runtime), resource_limits);
         renderer.initialize().await?;
+        if config.framework == crate::server::config::Framework::Solid {
+            // Inside the setup-mode window so the Solid scripts and per-isolate island
+            // state are broadcast to every runtime before the first request.
+            renderer.ensure_solid_pipeline().await?;
+        }
 
         let server_manifest = if config.is_production() {
             ComponentLoader::load_server_manifest_file().await?
