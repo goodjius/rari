@@ -5,11 +5,11 @@ export default function ProductsPage() {
     <div>
       <h1>Products</h1>
       <p>Browse our products by category.</p>
-      <nav className="space-y-2 mt-4">
-        <a href="/products/electronics/laptop-123" className="block text-blue-600 hover:underline">
+      <nav class="space-y-2 mt-4">
+        <a href="/products/electronics/laptop-123" class="block text-blue-600 hover:underline">
           Electronics - Laptop 123
         </a>
-        <a href="/products/books/novel-456" className="block text-blue-600 hover:underline">
+        <a href="/products/books/novel-456" class="block text-blue-600 hover:underline">
           Books - Novel 456
         </a>
       </nav>

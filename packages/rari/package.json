@@ -15,19 +15,15 @@
     "url": "https://github.com/rari-build/rari/issues"
   },
   "keywords": [
-    "react",
     "server-components",
-    "rsc",
     "ssr",
     "vite",
     "rust",
     "deno",
-    "framework"
+    "framework",
+    "solid"
   ],
-  "sideEffects": [
-    "./dist/runtime/entry-client.mjs",
-    "./dist/runtime/rsc-client-runtime.mjs"
-  ],
+  "sideEffects": [],
   "exports": {
     ".": {
       "types": "./dist/index.d.mts",
@@ -35,8 +31,8 @@
       "default": "./dist/index.mjs"
     },
     "./image": {
-      "types": "./dist/image.d.mts",
-      "default": "./dist/image.mjs"
+      "types": "./src/image/index.ts",
+      "default": "./src/image/index.ts"
     },
     "./font": {
       "types": "./dist/font.d.mts",
@@ -75,57 +71,17 @@
       "types": "./dist/headers.d.mts",
       "default": "./dist/headers.mjs"
     },
-    "./runtime/call-server": {
-      "types": "./dist/runtime/call-server.d.mts",
-      "default": "./dist/runtime/call-server.mjs"
-    },
     "./runtime/solid-call-server": {
       "types": "./dist/runtime/solid-call-server.d.mts",
       "default": "./dist/runtime/solid-call-server.mjs"
-    },
-    "./runtime/action-flight-refresh": {
-      "types": "./dist/runtime/action-flight-refresh.d.mts",
-      "default": "./dist/runtime/action-flight-refresh.mjs"
-    },
-    "./runtime/merge-flight-refresh": {
-      "types": "./dist/runtime/merge-flight-refresh.d.mts",
-      "default": "./dist/runtime/merge-flight-refresh.mjs"
-    },
-    "./runtime/flight-route-cache": {
-      "types": "./dist/runtime/flight-route-cache.d.mts",
-      "default": "./dist/runtime/flight-route-cache.mjs"
-    },
-    "./runtime/flight-router-state": {
-      "types": "./dist/runtime/flight-router-state.d.mts",
-      "default": "./dist/runtime/flight-router-state.mjs"
     },
     "./runtime/action-revalidation-kind": {
       "types": "./dist/runtime/action-revalidation-kind.d.mts",
       "default": "./dist/runtime/action-revalidation-kind.mjs"
     },
-    "./runtime/entry-client": {
-      "types": "./dist/runtime/entry-client.d.mts",
-      "default": "./dist/runtime/entry-client.mjs"
-    },
     "./runtime/entry-client-solid": {
       "types": "./dist/runtime/entry-client-solid.d.mts",
       "default": "./dist/runtime/entry-client-solid.mjs"
-    },
-    "./runtime/rsc-references": {
-      "types": "./dist/runtime/rsc-references.d.mts",
-      "default": "./dist/runtime/rsc-references.mjs"
-    },
-    "./runtime/rsc-client-runtime": {
-      "types": "./dist/runtime/rsc-client-runtime.d.mts",
-      "default": "./dist/runtime/rsc-client-runtime.mjs"
-    },
-    "./runtime/ErrorBoundaryWrapper": {
-      "types": "./dist/runtime/ErrorBoundaryWrapper.d.mts",
-      "default": "./dist/runtime/ErrorBoundaryWrapper.mjs"
-    },
-    "./runtime/ClientRouter": {
-      "types": "./dist/runtime/ClientRouter.d.mts",
-      "default": "./dist/runtime/ClientRouter.mjs"
     },
     "./vite": {
       "types": "./dist/vite.d.mts",
@@ -140,7 +96,12 @@
   "files": [
     "LICENSE",
     "README.md",
-    "dist"
+    "dist",
+    "src/image/constants.ts",
+    "src/image/image.tsx",
+    "src/image/index.ts",
+    "src/image/size-plan.ts",
+    "src/image/url.ts"
   ],
   "engines": {
     "node": ">=24.21.0"
@@ -151,47 +112,28 @@
     "lint": "vp lint",
     "lint:fix": "vp lint --fix",
     "typecheck": "tsc",
-    "update-google-fonts": "node ./scripts/update-google-fonts.ts",
-    "update-react-refresh-runtime": "node ./scripts/update-react-refresh-runtime.ts"
+    "update-google-fonts": "node ./scripts/update-google-fonts.ts"
   },
   "peerDependencies": {
-    "@babel/core": "catalog:solid",
     "@mdx-js/mdx": "catalog:mdx",
     "@rari/use-cache": "catalog:rari",
-    "babel-preset-solid": "catalog:solid",
-    "oxc-transform-react": "catalog:build",
-    "react": "catalog:react",
-    "react-dom": "catalog:react",
-    "solid-js": "catalog:solid",
-    "solid-refresh": "catalog:solid"
+    "solid-js": "catalog:solid"
   },
   "peerDependenciesMeta": {
-    "@babel/core": {
-      "optional": true
-    },
     "@mdx-js/mdx": {
       "optional": true
     },
     "@rari/use-cache": {
       "optional": true
-    },
-    "babel-preset-solid": {
-      "optional": true
-    },
-    "oxc-transform-react": {
-      "optional": true
-    },
-    "solid-js": {
-      "optional": true
-    },
-    "solid-refresh": {
-      "optional": true
     }
   },
   "dependencies": {
+    "@babel/core": "catalog:solid",
     "@capsizecss/metrics": "catalog:font",
     "@capsizecss/unpack": "catalog:font",
-    "react-server-dom-webpack": "catalog:react"
+    "babel-preset-solid": "catalog:solid",
+    "seroval": "catalog:solid",
+    "solid-refresh": "catalog:solid"
   },
   "optionalDependencies": {
     "rari-darwin-arm64": "0.15.17",
@@ -202,20 +144,13 @@
     "rari-win32-x64": "0.15.17"
   },
   "devDependencies": {
-    "@babel/core": "catalog:solid",
     "@mdx-js/mdx": "catalog:mdx",
     "@rari/deploy": "workspace:*",
     "@rari/logger": "workspace:*",
     "@rari/use-cache": "workspace:*",
     "@types/babel__core": "catalog:solid",
     "@types/node": "catalog:typescript",
-    "@types/react": "catalog:react",
-    "@types/react-dom": "catalog:react",
-    "babel-preset-solid": "catalog:solid",
-    "oxc-transform-react": "catalog:build",
-    "seroval": "catalog:solid",
     "solid-js": "catalog:solid",
-    "solid-refresh": "catalog:solid",
     "typescript": "catalog:typescript",
     "typescript-7": "catalog:typescript",
     "vite-plus": "catalog:build"

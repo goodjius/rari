@@ -1,5 +1,18 @@
-import { Suspense } from 'react'
-import { isoTimestamp } from '../../utils/test-helpers'
+import { createResource, Suspense } from 'solid-js'
+import { isoTimestamp, sleep } from '../../utils/test-helpers'
+
+function SlowComponent(props: { readonly name: string; readonly delay: number }) {
+  const [stamp] = createResource(async () => {
+    await sleep(props.delay)
+    return isoTimestamp()
+  })
+
+  return (
+    <div data-testid={`component-${props.name.toLowerCase()}`}>
+      {props.name}:{stamp()}
+    </div>
+  )
+}
 
 export default function ParallelSuspensePage() {
   return (
@@ -11,22 +24,6 @@ export default function ParallelSuspensePage() {
       <Suspense fallback={<div data-testid="loading-slow">Loading slow...</div>}>
         <SlowComponent name="Slow" delay={2000} />
       </Suspense>
-    </div>
-  )
-}
-
-interface SlowProps {
-  readonly name: string
-  readonly delay: number
-}
-
-async function SlowComponent({ name, delay }: SlowProps) {
-  await new Promise<void>(resolve => {
-    setTimeout(resolve, delay)
-  })
-  return (
-    <div data-testid={`component-${name.toLowerCase()}`}>
-      {name}:{isoTimestamp()}
     </div>
   )
 }

@@ -1,16 +1,7 @@
-import type { ComponentType, ReactElement, ReactNode } from 'react'
 import type { ProxyModule } from '@/proxy/http/types'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-export function isFlightThenable<T = unknown>(value: unknown): value is PromiseLike<T> {
-  return isRecord(value) && typeof value.then === 'function'
-}
-
-export function isLikelyReactElement(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && '$$typeof' in value
 }
 
 export function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
@@ -129,36 +120,6 @@ export function isAliasArray(
     const { find, replacement } = entry
     return (typeof find === 'string' || find instanceof RegExp) && typeof replacement === 'string'
   })
-}
-
-export function isComponentType(value: unknown): value is ComponentType<any> {
-  return (
-    typeof value === 'function' || (isRecord(value) && ('$$typeof' in value || 'render' in value))
-  )
-}
-
-export function isReactElementLike(
-  value: Readonly<Record<string, unknown>>,
-): value is { type: unknown; props?: Record<string, unknown> } {
-  return 'type' in value
-}
-
-export function isFlightImportTuple(
-  value: unknown,
-): value is [string, unknown, string | undefined, ...unknown[]] {
-  return Array.isArray(value) && typeof value[0] === 'string'
-}
-
-export function isClientReferenceType(type: unknown): boolean {
-  return isRecord(type) && type.$$typeof === Symbol.for('react.client.reference')
-}
-
-export function hasClientReferenceId(type: unknown): type is { $$id: string } {
-  return isRecord(type) && typeof type.$$id === 'string'
-}
-
-export function getReactElementProps(element: ReactElement): { children?: ReactNode } {
-  return element.props as { children?: ReactNode } // oxlint-disable-line typescript/no-unsafe-type-assertion ReactElement props are intentionally loose
 }
 
 export function aliasEntriesFromRecord(

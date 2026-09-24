@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { JSX } from 'solid-js'
 import type { AppIconEntry } from '../metadata/app-icons'
 
 export type { AppIconEntry } from '../metadata/app-icons'
@@ -184,7 +184,7 @@ export type PageProps<
 }>
 
 export type LayoutProps<TParams extends RouteParams = RouteParams> = Readonly<{
-  children: ReactNode
+  children: JSX.Element
   params?: TParams
   pathname?: string
 }>

@@ -26,7 +26,7 @@ test.describe.serial('Streaming Suspense E2E Tests', () => {
       for (const el of clone.querySelectorAll('script')) el.remove()
       return clone.innerHTML
     })
-    expect(withoutScripts).not.toContain('react.suspense')
+    expect(withoutScripts).not.toContain('<!--$?-->')
   })
 
   test('parallel: should resolve boundaries in order of their delay', async ({ page }) => {

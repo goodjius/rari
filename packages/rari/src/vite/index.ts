@@ -6,7 +6,6 @@ import type { MdxPluginOptions } from './mdx/registry'
 import type { RariPlugin } from './plugin/types'
 import type { ServerBuildOptions } from './server/build'
 import type { ServerCacheConfig, ServerCacheLayerConfig } from './server/config'
-import type { ReactCompilerOptions } from './transform/react-compiler'
 import type { ProxyPluginOptions } from '@/proxy/build/vite-plugin'
 import { Buffer } from 'node:buffer'
 import { spawn, spawnSync } from 'node:child_process'
@@ -24,22 +23,13 @@ import {
 } from '@/image/constants'
 import { rariProxy } from '@/proxy/build/vite-plugin'
 import { rariRouter } from '@/router/build/vite-plugin'
-import { patchBrowserClientForFormActions } from '@/shared/patch-flight-browser-client'
-import {
-  EXPORT_NAMED_DECLARATION_REGEX,
-  EXTENSION_REGEX,
-  HTTP_PROTOCOL_REGEX,
-  TSX_EXT_REGEX,
-  WINDOWS_PATH_REGEX,
-} from '@/shared/regex-constants'
+import { EXTENSION_REGEX, HTTP_PROTOCOL_REGEX, TSX_EXT_REGEX } from '@/shared/regex-constants'
 import { clearFileResolverCache, resolveImportToFilePath } from '@/shared/utils/file-resolver'
 import { isPathInside, normalizeAssetsDir, pathnameFromUrl, toPosixPath } from '@/shared/utils/path'
 import { getRariServerPort } from '@/shared/utils/server-port'
 import {
-  aliasEntriesFromRecord,
   errorMessage,
   getErrnoCode,
-  isAliasArray,
   isRecord,
   parseJsonArrayRecord,
   parseJsonRecord,
@@ -50,7 +40,6 @@ import {
   analyzeModuleSource,
   collectExportNames,
   hasDefaultExport,
-  rewriteExportDefaultAsBinding,
   scanImportStatements,
 } from './analysis/directives'
 import {
@@ -60,10 +49,9 @@ import {
   resolveModuleCachePath,
 } from './analysis/module-cache'
 import { normalizeScanDirs } from './analysis/source-walker'
-import { createSilenceReactDirectiveLogsPlugin } from './build/silence-directive-logs'
+import { createSilenceDirectiveLogsPlugin } from './build/silence-directive-logs'
 import {
   buildClientHeadFromBundle,
-  buildLayoutCssImportStatements,
   CLIENT_HEAD_FILE,
   collectLayoutCssDevHrefs,
   resetClientHeadExtras,
@@ -87,23 +75,11 @@ import {
   ServerComponentBuilder,
 } from './server/build'
 import { clearViteEmitBuilder, getOrCreateViteEmitBuilder } from './server/rsc-vite-build'
-import {
-  buildClientReferenceReplacementFromImport,
-  ensureNamedImportFromModule,
-} from './transform/client-import'
-import {
-  hasRegisterServerReferenceImport,
-  transformInlineServerActions,
-} from './transform/inline-server-action'
+import { transformInlineServerActions } from './transform/inline-server-action'
 import { transformDefineMdxComponents } from './transform/mdx-components'
-import { createReactCompilerPlugin } from './transform/react-compiler'
-import { createReactRefreshPlugins } from './transform/react-refresh'
 import { createSolidCompilerPlugin } from './transform/solid-compiler'
 import { buildSolidIslandReplacementFromImport } from './transform/solid-island-import'
 import { getUseCacheTransform } from './transform/use-cache'
-
-const DIST_NOT_BUILT_ERROR =
-  '[rari] Runtime dist not built. Run `pnpm build` in the rari package first.'
 
 const PROXY_BODY_MAX_BYTES = 10 * 1024 * 1024
 const DOCUMENT_ASSET_EXT_RE =
@@ -142,16 +118,6 @@ function isReservedRoutePrefix(pathname: string, segment: string): boolean {
   return pathname === segment || pathname.startsWith(`${segment}/`)
 }
 
-const IMPORT_TYPE_SPECIFIER_REGEX =
-  /import\s+type\s+(\{[^}]+\})\s+from\s+["']\.\.?\/([^"']+)["'];?/g
-const IMPORT_TYPE_NAMESPACE_REGEX =
-  /import\s+type\s+(\*\s+as\s+\w+)\s+from\s+["']\.\.?\/([^"']+)["'];?/g
-const IMPORT_TYPE_DEFAULT_REGEX = /import\s+type\s+(\w+)\s+from\s+["']\.\.?\/([^"']+)["'];?/g
-const IMPORT_SPECIFIER_REGEX = /import\s+(\{[^}]+\})\s+from\s+["']\.\.?\/([^"']+)["'];?/g
-const IMPORT_NAMESPACE_REGEX = /import\s+(\*\s+as\s+\w+)\s+from\s+["']\.\.?\/([^"']+)["'];?/g
-const IMPORT_DEFAULT_REGEX = /import\s+(\w+)\s+from\s+["']\.\.?\/([^"']+)["'];?/g
-const IMPORT_SIDE_EFFECT_REGEX = /import\s+["']\.\.?\/([^"']+)["'];?/g
-const EXPORT_DEFAULT_FUNCTION_DECL_REGEX = /export\s+default\s+(?:async\s+)?function\s+(\w+)/
 const USE_CLIENT_DIRECTIVE_REGEX = /^['"]use client['"];?\s*$/gm
 const LOCAL_IMPORT_SOURCE_REGEX = /^[./@~#]/
 
@@ -161,28 +127,6 @@ function matchesAliasImport(source: string, aliases: Readonly<Record<string, str
   }
   return false
 }
-
-function isMissingPackageExportError(error: unknown): boolean {
-  const code = getErrnoCode(error)
-  return (
-    code === 'ENOENT' || code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || code === 'ERR_MODULE_NOT_FOUND'
-  )
-}
-
-function isExactReactAliasFind(find: string | RegExp): boolean {
-  return (
-    find === 'react' || (find instanceof RegExp && find.source === '^react$' && find.flags === '')
-  )
-}
-
-const REACT_IMPORT_REGEX = /import\s+\{[^}]*\}\s+from\s+['"]react['"]/
-const REACT_IMPORT_WITH_DEFAULT_REGEX = /import\s+[^,\s]+\s*,\s*\{[^}]*\}\s+from\s+['"]react['"]/
-const REACT_IMPORT_MATCH_REGEX = /import React(,\s*\{([^}]*)\})?\s+from\s+['"]react['"];?/
-const RSC_CLIENT_IMPORT_REGEX =
-  /from(\s*)(['"])(?:\.\/vendor\/react-flight-client\/index|rari\/runtime\/vendor\/react-flight-client\/index)\.mjs\2/g
-const JSX_TEST_REGEX = /\bJSX\b/
-const IMPORT_SPECIFIERS_REGEX = /\{([^}]*)\}/
-const USE_CLIENT_DIRECTIVE_LINE_REGEX = /^['"]use client['"];?\s*\n/
 
 export interface RouterPluginOptions {
   readonly appDir?: string
@@ -243,14 +187,6 @@ export interface RariOptions {
     readonly useCacheRemote?: ServerCacheLayerConfig
   }
   readonly mdx?: MdxPluginOptions
-  readonly compiler?: boolean | ReactCompilerOptions
-  /**
-   * UI framework the app is authored in. `'react'` (default) keeps the
-   * existing React/RSC pipeline; `'solid'` swaps the React-hardwired pieces
-   * (JSX compiler, HMR, aliases, dedupe, resolve conditions, externals) for
-   * their Solid equivalents.
-   */
-  readonly framework?: 'react' | 'solid'
 }
 
 const DEFAULT_IMAGE_CONFIG = {
@@ -283,75 +219,6 @@ function mergeLocalPatterns(
   return merged
 }
 
-const runtimeFileCache = new Map<string, string>()
-
-async function loadRuntimeFile(filename: string): Promise<string> {
-  const cached = runtimeFileCache.get(filename)
-  if (cached != null && cached !== '') return cached
-
-  const currentFileUrl = import.meta.url
-  const currentFilePath = fileURLToPath(currentFileUrl)
-  const currentDir = path.dirname(currentFilePath)
-
-  const possiblePaths = [
-    path.join(currentDir, 'runtime', filename),
-    path.join(currentDir, '../runtime', filename),
-  ]
-
-  for (const filePath of possiblePaths) {
-    try {
-      let content = await fs.promises.readFile(filePath, 'utf-8')
-
-      if (filePath.endsWith('.ts')) {
-        content = content.replace(
-          IMPORT_TYPE_SPECIFIER_REGEX,
-          (match, specifier, modulePath) => `import type ${specifier} from "rari/${modulePath}";`,
-        )
-
-        content = content.replace(
-          IMPORT_TYPE_NAMESPACE_REGEX,
-          (match, specifier, modulePath) => `import type ${specifier} from "rari/${modulePath}";`,
-        )
-
-        content = content.replace(
-          IMPORT_TYPE_DEFAULT_REGEX,
-          (match, specifier, modulePath) => `import type ${specifier} from "rari/${modulePath}";`,
-        )
-
-        content = content.replace(
-          IMPORT_SPECIFIER_REGEX,
-          (match, specifier, modulePath) => `import ${specifier} from "rari/${modulePath}";`,
-        )
-
-        content = content.replace(
-          IMPORT_NAMESPACE_REGEX,
-          (match, specifier, modulePath) => `import ${specifier} from "rari/${modulePath}";`,
-        )
-
-        content = content.replace(
-          IMPORT_DEFAULT_REGEX,
-          (match, specifier, modulePath) => `import ${specifier} from "rari/${modulePath}";`,
-        )
-
-        content = content.replace(
-          IMPORT_SIDE_EFFECT_REGEX,
-          (match, modulePath) => `import "rari/${modulePath}";`,
-        )
-      }
-
-      runtimeFileCache.set(filename, content)
-      return content
-    } catch (err) {
-      const code = getErrnoCode(err)
-      if (code !== 'ENOENT' && code !== 'EISDIR') {
-        console.warn(`[rari] Unexpected error reading ${filePath}:`, err)
-      }
-    }
-  }
-
-  throw new Error(`Could not find ${filename}. Tried: ${possiblePaths.join(', ')}`)
-}
-
 const RARI_DIST_DIR = path.dirname(fileURLToPath(import.meta.url))
 const RARI_PACKAGE_ROOT = path.dirname(RARI_DIST_DIR)
 
@@ -370,26 +237,6 @@ function resolveRuntimeDistFile(filename: string): string | null {
 
 function isRariInternalFile(filePath: string): boolean {
   return filePath.startsWith(RARI_PACKAGE_ROOT)
-}
-
-async function loadRscClientRuntime(): Promise<string> {
-  return loadRuntimeFile('rsc-client-runtime.mjs')
-}
-
-async function loadEntryClient(
-  imports: string,
-  registrations: string,
-  layoutCssImports = '',
-): Promise<string> {
-  const template = await loadRuntimeFile('entry-client.mjs')
-  const body = template
-    .replace('/*! @preserve CLIENT_COMPONENT_IMPORTS_PLACEHOLDER */', imports)
-    .replace('/*! @preserve CLIENT_COMPONENT_REGISTRATIONS_PLACEHOLDER */', registrations)
-  return layoutCssImports !== '' ? `${layoutCssImports}\n${body}` : body
-}
-
-async function loadRscReferences(): Promise<string> {
-  return loadRuntimeFile('rsc-references.mjs')
 }
 
 async function writeImageConfig(
@@ -477,8 +324,6 @@ export function rari(
       throw new Error(`jsPoolSize must be a finite positive integer; received ${String(size)}`)
     }
   }
-
-  const framework = options.framework ?? 'react'
 
   const componentTypeCache = new Map<string, 'client' | 'server' | 'unknown'>()
   const clientComponents = new Set<string>()
@@ -588,79 +433,15 @@ export function rari(
     }
   }
 
-  function transformServerModule(code: string, id: string, analysis: ModuleAnalysis): string {
+  function transformServerModule(code: string, id: string): string {
     const projectRoot =
       options.projectRoot != null && options.projectRoot !== ''
         ? options.projectRoot
         : process.cwd()
     const moduleId = getComponentId(id, projectRoot)
 
-    // Solid actions resolve by plain named export - no registerServerReference wrapper.
-    if (framework === 'solid')
-      return transformInlineServerActions(code, moduleId, { solid: true })?.code ?? code
-
-    const inlineTransformed = transformInlineServerActions(code, moduleId)
-    let newCode = inlineTransformed?.code ?? code
-
-    if (!analysis.topLevelUseServer) {
-      if (inlineTransformed == null) return code
-      newCode += `
-
-if (import.meta.hot) {
-  import.meta.hot.accept(() => {
-  });
-}`
-      return newCode
-    }
-
-    const exportedNames = parseExportedNames(newCode, analysis)
-    if (exportedNames.length === 0 && inlineTransformed == null) return code
-
-    const idJson = JSON.stringify(moduleId)
-    if (!hasRegisterServerReferenceImport(newCode)) {
-      newCode += '\n\nimport {registerServerReference} from "react-server-dom-rari/server";\n'
-    } else {
-      newCode += '\n'
-    }
-
-    for (const name of exportedNames) {
-      if (name === 'default') {
-        const functionDeclMatch = EXPORT_DEFAULT_FUNCTION_DECL_REGEX.exec(newCode)
-
-        if (functionDeclMatch) {
-          const functionName = functionDeclMatch[1]
-          newCode += `\n// Register server reference for default export\n`
-          newCode += `registerServerReference(${functionName}, ${idJson}, ${JSON.stringify(name)});\n`
-        } else {
-          const tempVarName = '__default_export__'
-          const rewritten = rewriteExportDefaultAsBinding(newCode, tempVarName)
-          if (rewritten != null) {
-            newCode = rewritten
-            newCode += `\n// Register server reference for default export\n`
-            newCode += `if (typeof ${tempVarName} === "function") {\n`
-            newCode += `  registerServerReference(${tempVarName}, ${idJson}, ${JSON.stringify(name)});\n`
-            newCode += `}\n`
-          }
-        }
-      } else if (inlineTransformed?.rewrittenExportNames.includes(name)) {
-        // Already registered by the inline-action hoist under this export name.
-        continue
-      } else {
-        newCode += `\n// Register server reference for ${name}\n`
-        newCode += `if (typeof ${name} === "function") {\n`
-        newCode += `  registerServerReference(${name}, ${idJson}, ${JSON.stringify(name)});\n`
-        newCode += `}\n`
-      }
-    }
-
-    newCode += `
-
-if (import.meta.hot) {
-  import.meta.hot.accept(() => {
-  });
-}`
-
-    return newCode
+    // Actions resolve by plain named export - no registerServerReference wrapper.
+    return transformInlineServerActions(code, moduleId)?.code ?? code
   }
 
   function transformClientModule(code: string, id: string, analysis: ModuleAnalysis): string {
@@ -676,19 +457,13 @@ if (import.meta.hot) {
 
       const moduleId = getComponentId(id, projectRoot)
 
-      const isSolid = framework === 'solid'
-      let newCode = isSolid
-        ? 'import { createServerReference } from "rari/runtime/solid-call-server";\n'
-        : 'import { createServerReference } from "virtual:react-flight-client";\nimport { callServer } from "rari/runtime/call-server";\n'
-      const referenceArgs = isSolid ? '' : ', callServer'
+      let newCode = 'import { createServerReference } from "rari/runtime/solid-call-server";\n'
 
       for (const name of exportedNames) {
         const refId = `${moduleId}#${name}`
         const refIdJson = JSON.stringify(refId)
-        if (name === 'default')
-          newCode += `export default createServerReference(${refIdJson}${referenceArgs});\n`
-        else
-          newCode += `export const ${name} = createServerReference(${refIdJson}${referenceArgs});\n`
+        if (name === 'default') newCode += `export default createServerReference(${refIdJson});\n`
+        else newCode += `export const ${name} = createServerReference(${refIdJson});\n`
       }
 
       return newCode
@@ -699,32 +474,7 @@ if (import.meta.hot) {
       return ''
     }
 
-    if (!analysis.topLevelUseClient) return code
-
-    const exportedNames = parseExportedNames(code, analysis)
-    if (exportedNames.length === 0) return ''
-
-    const idJson = JSON.stringify(id)
-    let newCode = 'import {registerClientReference} from "react-server-dom-rari/server";\n'
-
-    for (const name of exportedNames) {
-      if (name === 'default') {
-        const errorMsg = `Attempted to call the default export of ${id} from the server but it's on the client. It's not possible to invoke a client function from the server, it can only be rendered as a Component or passed to props of a Client Component.`
-        newCode += 'export default '
-        newCode += 'registerClientReference(function() {'
-        newCode += `throw new Error(${JSON.stringify(errorMsg)});`
-      } else {
-        const errorMsg = `Attempted to call ${name}() from the server but ${name} is on the client. It's not possible to invoke a client function from the server, it can only be rendered as a Component or passed to props of a Client Component.`
-        newCode += `export const ${name} = `
-        newCode += 'registerClientReference(function() {'
-        newCode += `throw new Error(${JSON.stringify(errorMsg)});`
-      }
-      newCode += '},'
-      newCode += `${idJson},`
-      newCode += `${JSON.stringify(name)});\n`
-    }
-
-    return newCode
+    return code
   }
 
   function transformClientModuleForClient(
@@ -824,93 +574,12 @@ if (import.meta.hot) {
       }
 
       config.resolve ??= {}
-      const resolveOptions = config.resolve
-      const existingDedupe = Array.isArray(resolveOptions.dedupe) ? resolveOptions.dedupe : []
-      const toAdd = framework === 'solid' ? [] : ['react', 'react-dom']
-      resolveOptions.dedupe = [...new Set(existingDedupe).union(new Set(toAdd))]
-
-      let existingAlias: Array<{
-        find: string | RegExp
-        replacement: string
-      }> = []
-
-      if (isAliasArray(resolveOptions.alias)) {
-        existingAlias = resolveOptions.alias
-      } else if (isRecord(resolveOptions.alias)) {
-        existingAlias = aliasEntriesFromRecord(resolveOptions.alias)
-      }
-
-      existingAlias = existingAlias.map(entry =>
-        entry.find === 'react' ? { find: /^react$/, replacement: entry.replacement } : entry,
-      )
-
-      const aliasFinds = new Set(existingAlias.map(a => String(a.find)))
-      const hasExactReactAlias = existingAlias.some(entry => isExactReactAliasFind(entry.find))
-      if (framework === 'react')
-        try {
-          const reactPath = fileURLToPath(import.meta.resolve('react'))
-          const reactDomClientPath = fileURLToPath(import.meta.resolve('react-dom/client'))
-          const reactJsxRuntimePath = fileURLToPath(import.meta.resolve('react/jsx-runtime'))
-          const aliasesToAppend: Array<{ find: string | RegExp; replacement: string }> = []
-          if (!aliasFinds.has('react/jsx-runtime')) {
-            aliasesToAppend.push({
-              find: 'react/jsx-runtime',
-              replacement: reactJsxRuntimePath,
-            })
-          }
-          try {
-            const reactJsxDevRuntimePath = fileURLToPath(
-              import.meta.resolve('react/jsx-dev-runtime'),
-            )
-            if (!aliasFinds.has('react/jsx-dev-runtime')) {
-              aliasesToAppend.push({
-                find: 'react/jsx-dev-runtime',
-                replacement: reactJsxDevRuntimePath,
-              })
-            }
-          } catch (err) {
-            if (!isMissingPackageExportError(err)) {
-              console.warn('[rari] Unexpected error resolving react/jsx-dev-runtime:', err)
-            }
-          }
-          try {
-            const reactCompilerRuntimePath = fileURLToPath(
-              import.meta.resolve('react/compiler-runtime'),
-            )
-            if (!aliasFinds.has('react/compiler-runtime')) {
-              aliasesToAppend.push({
-                find: 'react/compiler-runtime',
-                replacement: reactCompilerRuntimePath,
-              })
-            }
-          } catch (err) {
-            if (!isMissingPackageExportError(err)) {
-              console.warn('[rari] Unexpected error resolving react/compiler-runtime:', err)
-            }
-          }
-          if (!hasExactReactAlias) aliasesToAppend.push({ find: /^react$/, replacement: reactPath })
-          if (!aliasFinds.has('react-dom/client')) {
-            aliasesToAppend.push({
-              find: 'react-dom/client',
-              replacement: reactDomClientPath,
-            })
-          }
-          resolveOptions.alias = [...existingAlias, ...aliasesToAppend]
-        } catch (err) {
-          if (!isMissingPackageExportError(err)) {
-            console.warn('[rari] Unexpected error configuring React aliases:', err)
-          }
-        }
-
       config.environments ??= {}
 
       config.environments.rsc = {
         consumer: 'server',
         resolve: {
-          conditions:
-            framework === 'solid'
-              ? ['solid', 'node', 'import']
-              : ['react-server', 'node', 'import'],
+          conditions: ['solid', 'node', 'import'],
         },
         build: {
           outDir: 'dist/server',
@@ -924,7 +593,7 @@ if (import.meta.hot) {
       config.environments.ssr = {
         consumer: 'server',
         resolve: {
-          conditions: framework === 'solid' ? ['solid', 'node', 'import'] : ['node', 'import'],
+          conditions: ['solid', 'node', 'import'],
         },
         build: {
           outDir: 'dist/ssr',
@@ -938,8 +607,11 @@ if (import.meta.hot) {
       config.environments.client = {
         consumer: 'client',
         resolve: {
+          // solid-refresh (HMR) requires Solid's dev build, selected by the `development` condition.
           conditions:
-            framework === 'solid' ? ['solid', 'browser', 'import'] : ['browser', 'import'],
+            command === 'serve'
+              ? ['solid', 'development', 'browser', 'import']
+              : ['solid', 'browser', 'import'],
         },
         ...config.environments.client,
       }
@@ -950,22 +622,6 @@ if (import.meta.hot) {
 
       config.optimizeDeps ??= {}
       config.optimizeDeps.include ??= []
-
-      const coreOptimizeDeps =
-        framework === 'solid'
-          ? []
-          : [
-              'react',
-              'react-dom',
-              'react-dom/client',
-              'react-dom/server',
-              'react/jsx-runtime',
-              'react/jsx-dev-runtime',
-            ]
-
-      for (const dep of coreOptimizeDeps) {
-        if (!config.optimizeDeps.include.includes(dep)) config.optimizeDeps.include.push(dep)
-      }
 
       config.optimizeDeps.exclude ??= []
       if (!config.optimizeDeps.exclude.includes('rari')) config.optimizeDeps.exclude.push('rari')
@@ -1042,11 +698,6 @@ if (import.meta.hot) {
                     }
                   }
 
-                  if (framework === 'react') {
-                    if (moduleId.includes('node_modules/react-dom')) return 'react-dom'
-                    if (moduleId.includes('node_modules/react')) return 'react'
-                  }
-
                   return 'vendor'
                 }
 
@@ -1064,12 +715,6 @@ if (import.meta.hot) {
       }
 
       config.environments.client.build.rolldownOptions.external ??= []
-
-      const external = config.environments.client.build.rolldownOptions.external
-      if (Array.isArray(external)) {
-        const rsdwClientIndex = external.indexOf('react-server-dom-webpack/client')
-        if (rsdwClientIndex !== -1) external.splice(rsdwClientIndex, 1)
-      }
 
       return config
     },
@@ -1139,7 +784,7 @@ if (import.meta.hot) {
         setComponentType(id, 'server')
 
         if (environment.name === 'rsc') {
-          return transformServerModule(code, id, moduleAnalysis)
+          return transformServerModule(code, id)
         }
         return transformClientModule(code, id, moduleAnalysis)
       }
@@ -1190,7 +835,6 @@ if (import.meta.hot) {
       function rewriteClientImportsForServerEnvironment(source: string, fileId: string): string {
         let modifiedCode = source
         const replacements: Array<{ start: number; end: number; replacement: string }> = []
-        const clientRefHelpers = new Set<string>()
 
         for (const imp of scanImportStatements(modifiedCode)) {
           if (imp.typeOnly || imp.sideEffectOnly) continue
@@ -1208,22 +852,11 @@ if (import.meta.hot) {
           setComponentType(resolvedImportPath, 'client')
           addTrackedClientComponent(resolvedImportPath)
 
-          const clientRefReplacement =
-            framework === 'solid'
-              ? {
-                  ...buildSolidIslandReplacementFromImport(
-                    imp,
-                    clientReferenceIdForPath(resolvedImportPath),
-                  ),
-                  helpers: [] as string[],
-                }
-              : buildClientReferenceReplacementFromImport(
-                  imp,
-                  clientReferenceIdForPath(resolvedImportPath),
-                )
+          const clientRefReplacement = buildSolidIslandReplacementFromImport(
+            imp,
+            clientReferenceIdForPath(resolvedImportPath),
+          )
           if (clientRefReplacement.code === '') continue
-
-          for (const helper of clientRefReplacement.helpers) clientRefHelpers.add(helper)
 
           replacements.push({
             start: imp.start,
@@ -1240,12 +873,6 @@ if (import.meta.hot) {
           modifiedCode = modifiedCode.slice(0, start) + replacement + modifiedCode.slice(end)
         }
 
-        if (clientRefHelpers.size > 0) {
-          modifiedCode = ensureNamedImportFromModule(modifiedCode, 'react-server-dom-rari/server', [
-            ...clientRefHelpers,
-          ])
-        }
-
         return modifiedCode
       }
 
@@ -1253,7 +880,7 @@ if (import.meta.hot) {
         setComponentType(id, 'server')
 
         if (environment.name === 'rsc' || environment.name === 'ssr') {
-          const serverTransformed = transformServerModule(code, id, moduleAnalysis)
+          const serverTransformed = transformServerModule(code, id)
           return rewriteClientImportsForServerEnvironment(serverTransformed, id)
         } else {
           let clientTransformedCode = transformClientModule(code, id, moduleAnalysis)
@@ -1277,7 +904,7 @@ ${clientTransformedCode}`
       const cachedType = getComponentType(id)
       if (cachedType === 'server') {
         if (environment.name === 'rsc' || environment.name === 'ssr') {
-          const serverTransformed = transformServerModule(code, id, moduleAnalysis)
+          const serverTransformed = transformServerModule(code, id)
           return rewriteClientImportsForServerEnvironment(serverTransformed, id)
         } else {
           return transformClientModule(code, id, moduleAnalysis)
@@ -1289,10 +916,8 @@ ${clientTransformedCode}`
 
       let modifiedCode = code
       let hasServerImports = false
-      let needsReactImport = false
       const importingFileIsClient = id.includes('entry-client')
       const replacements: Array<{ start: number; end: number; replacement: string }> = []
-      const clientRefHelpers = new Set<string>()
 
       for (const imp of scanImportStatements(code)) {
         if (imp.typeOnly || imp.sideEffectOnly) continue
@@ -1320,22 +945,11 @@ ${clientTransformedCode}`
           continue
         }
 
-        const clientRefReplacement =
-          framework === 'solid'
-            ? {
-                ...buildSolidIslandReplacementFromImport(
-                  imp,
-                  clientReferenceIdForPath(resolvedImportPath),
-                ),
-                helpers: [] as string[],
-              }
-            : buildClientReferenceReplacementFromImport(
-                imp,
-                clientReferenceIdForPath(resolvedImportPath),
-              )
+        const clientRefReplacement = buildSolidIslandReplacementFromImport(
+          imp,
+          clientReferenceIdForPath(resolvedImportPath),
+        )
         if (clientRefReplacement.code === '') continue
-
-        for (const helper of clientRefReplacement.helpers) clientRefHelpers.add(helper)
 
         replacements.push({
           start: imp.start,
@@ -1343,62 +957,12 @@ ${clientTransformedCode}`
           replacement: clientRefReplacement.code,
         })
         hasServerImports = true
-        needsReactImport = framework === 'react'
       }
 
       for (const { start, end, replacement } of [...replacements].sort((a, b) => b.start - a.start))
         modifiedCode = modifiedCode.slice(0, start) + replacement + modifiedCode.slice(end)
 
-      if (clientRefHelpers.size > 0) {
-        modifiedCode = ensureNamedImportFromModule(modifiedCode, 'react-server-dom-rari/server', [
-          ...clientRefHelpers,
-        ])
-      }
-
-      if (hasServerImports && framework === 'solid') return modifiedCode
-
-      if (hasServerImports) {
-        const hasReactImport =
-          modifiedCode.includes('import React') ||
-          REACT_IMPORT_REGEX.test(modifiedCode) ||
-          REACT_IMPORT_WITH_DEFAULT_REGEX.test(modifiedCode)
-
-        let importsToAdd = ''
-
-        if (needsReactImport && !hasReactImport) importsToAdd += `import React from 'react';\n`
-        if (importsToAdd) modifiedCode = importsToAdd + modifiedCode
-        if (!modifiedCode.includes('Suspense')) {
-          const reactImportMatch = REACT_IMPORT_MATCH_REGEX.exec(modifiedCode)
-          if (reactImportMatch) {
-            if (reactImportMatch[1] && !reactImportMatch[2].includes('Suspense')) {
-              modifiedCode = modifiedCode.replace(
-                reactImportMatch[0],
-                reactImportMatch[0].replace(IMPORT_SPECIFIERS_REGEX, `{ Suspense, $1 }`),
-              )
-            } else if (!reactImportMatch[1]) {
-              modifiedCode = modifiedCode.replace(
-                reactImportMatch[0],
-                `import React, { Suspense } from 'react';`,
-              )
-            }
-          }
-        }
-
-        const isDevMode = process.env.NODE_ENV !== 'production'
-        const hasJsx =
-          modifiedCode.includes('</') ||
-          modifiedCode.includes('/>') ||
-          JSX_TEST_REGEX.test(modifiedCode)
-
-        if (hasJsx) {
-          if (isDevMode) {
-            modifiedCode = `'use client';\n\n${modifiedCode}`
-            setComponentType(id, 'client')
-          }
-        }
-
-        return modifiedCode
-      }
+      if (hasServerImports) return modifiedCode
 
       if (wasUseCacheTransformed) return code
 
@@ -1428,7 +992,6 @@ ${clientTransformedCode}`
             cache: options.cache,
             action: options.action,
             jsPoolSize: options.jsPoolSize,
-            framework,
             origin: options.origin,
             htmlLimitedBots: options.htmlLimitedBots,
             experimental: options.experimental,
@@ -1578,10 +1141,6 @@ ${clientTransformedCode}`
             ...(options.jsPoolSize != null &&
             (process.env.RARI_JS_POOL_SIZE == null || process.env.RARI_JS_POOL_SIZE === '')
               ? { RARI_JS_POOL_SIZE: String(options.jsPoolSize) }
-              : {}),
-            ...(framework === 'solid' &&
-            (process.env.RARI_FRAMEWORK == null || process.env.RARI_FRAMEWORK === '')
-              ? { RARI_FRAMEWORK: 'solid' }
               : {}),
             ...(origin != null && origin !== '' && (envOrigin == null || envOrigin === '')
               ? { RARI_ORIGIN: origin }
@@ -1916,31 +1475,11 @@ ${clientTransformedCode}`
     },
 
     resolveId(id, importer) {
-      if (id === 'virtual:rsc-integration' || id === 'virtual:rsc-integration.ts')
-        return 'virtual:rsc-integration.ts'
       if (id === 'virtual:rari-entry-client' || id === 'virtual:rari-entry-client.ts')
         return 'virtual:rari-entry-client.ts'
-      if (id === 'virtual:react-flight-client' || id === 'virtual:react-flight-client.ts')
-        return 'virtual:react-flight-client.ts'
-      if (id === 'virtual:app-router-provider' || id === 'virtual:app-router-provider.tsx')
-        return 'virtual:app-router-provider.tsx'
-      if (id === 'virtual:client-router' || id === 'virtual:client-router.tsx')
-        return 'virtual:client-router.tsx'
-      if (id === 'virtual:error-boundary-wrapper' || id === 'virtual:error-boundary-wrapper.tsx')
-        return 'virtual:error-boundary-wrapper.tsx'
       if (isMdxRegistryModuleId(id)) return 'virtual:rari-mdx-components.ts'
       if (id === 'virtual:rari-mdx-components' || id === 'virtual:rari-mdx-components.ts')
         return 'virtual:rari-mdx-components.ts'
-
-      if (
-        id === 'react-server-dom-webpack/client' ||
-        id === 'react-server-dom-webpack/client.browser'
-      )
-        return 'virtual:react-flight-client.ts'
-
-      if (id === './LoadingErrorBoundary' || id === './LoadingErrorBoundary.tsx')
-        return 'virtual:loading-error-boundary.tsx'
-      if (id === 'react-server-dom-rari/server') return id
 
       if (
         importer != null &&
@@ -2013,7 +1552,7 @@ ${clientTransformedCode}`
       return null
     },
 
-    async load(id) {
+    load(id) {
       if (TSX_EXT_REGEX.test(id)) {
         const environment = this.environment
 
@@ -2030,7 +1569,7 @@ ${clientTransformedCode}`
 
       if (id === 'virtual:rari-mdx-components.ts') return buildMdxRegistryModule()
 
-      if (id === 'virtual:rari-entry-client.ts' && framework === 'solid') {
+      if (id === 'virtual:rari-entry-client.ts') {
         const projectRoot =
           options.projectRoot != null && options.projectRoot !== ''
             ? options.projectRoot
@@ -2062,266 +1601,6 @@ ${loaders}
 }
 hydrateAllSolidIslands()
 `
-      }
-
-      if (id === 'virtual:rari-entry-client.ts') {
-        const projectRoot =
-          options.projectRoot != null && options.projectRoot !== ''
-            ? options.projectRoot
-            : process.cwd()
-        const srcDir = path.join(projectRoot, 'src')
-        const scannedClientComponents = collectClientComponentPaths(
-          normalizeScanDirs(srcDir, Object.values(resolvedAlias)),
-          moduleAnalysisCache,
-        )
-
-        const allClientComponents = getKnownClientComponentPaths().union(
-          new Set(scannedClientComponents),
-        )
-
-        const externalClientComponents = [
-          { path: 'rari/image', exports: ['Image'] },
-          { path: 'virtual:error-boundary-wrapper.tsx', exports: ['ErrorBoundaryWrapper'] },
-        ]
-
-        const clientComponentsArray = [...allClientComponents].filter(componentPath => {
-          try {
-            return moduleAnalysisCache.get(componentPath).topLevelUseClient
-          } catch {
-            return false
-          }
-        })
-
-        const lazyLoaderRegistry = clientComponentsArray
-          .map(componentPath => {
-            const relativePath = toPosixPath(path.relative(process.cwd(), componentPath))
-            const componentId = relativePath.replace(TSX_EXT_REGEX, '')
-            const registrationPath = relativePath.startsWith('..')
-              ? toPosixPath(componentPath)
-              : relativePath
-
-            let hasNamedExport = false
-            let namedExportName = ''
-            try {
-              const analysis = moduleAnalysisCache.get(componentPath)
-              const hasDefault = analysis.hasDefaultExport
-
-              if (!hasDefault) {
-                const code = moduleAnalysisCache.getSource(componentPath)
-                const namedExportMatch = code.match(EXPORT_NAMED_DECLARATION_REGEX)
-
-                if (namedExportMatch) {
-                  hasNamedExport = true
-                  namedExportName = namedExportMatch[1]
-                }
-              }
-            } catch (err) {
-              if (getErrnoCode(err) !== 'ENOENT') {
-                console.warn(
-                  '[rari] Unexpected error reading component for export detection:',
-                  componentPath,
-                  err,
-                )
-              }
-            }
-
-            const exportName = hasNamedExport ? namedExportName : 'default'
-            const displayName = hasNamedExport
-              ? namedExportName
-              : path.basename(componentPath, path.extname(componentPath))
-
-            const normalizedPath = toPosixPath(registrationPath)
-            const importPath =
-              normalizedPath.startsWith('/') || WINDOWS_PATH_REGEX.test(normalizedPath)
-                ? normalizedPath
-                : `/${normalizedPath}`
-            const importStatement = `import(${JSON.stringify(importPath)})`
-
-            return `  "${registrationPath}": {
-    id: "${componentId}",
-    path: "${registrationPath}",
-    exportName: "${exportName}",
-    displayName: "${displayName}",
-    type: "client",
-    loader: () => ${importStatement},
-    component: null,
-    loading: false,
-    registered: false
-  }`
-          })
-          .join(',\n')
-
-        const externalImports = externalClientComponents
-          .map((ext, index) => {
-            return `import * as ExternalModule${index} from '${ext.path}';`
-          })
-          .join('\n')
-
-        const externalRegistrations = externalClientComponents
-          .flatMap((ext, index) => {
-            return ext.exports.map(exportName => {
-              const fullId = `${ext.path}#${exportName}`
-              return `
-globalThis['~clientComponents'] = globalThis['~clientComponents'] || {};
-globalThis['~clientComponents']["${fullId}"] = {
-  id: "${exportName}",
-  path: "${ext.path}",
-  type: "client",
-  component: ExternalModule${index},
-  registered: true
-};
-globalThis['~clientComponents']["${ext.path}"] = globalThis['~clientComponents']["${ext.path}"] || {};
-globalThis['~clientComponents']["${ext.path}"].component = ExternalModule${index};
-globalThis['~clientComponentPaths'] = globalThis['~clientComponentPaths'] || {};
-globalThis['~clientComponentPaths']["${ext.path}"] = "${exportName}";`
-            })
-          })
-          .join('\n')
-
-        const registrations = `
-const lazyComponentRegistry = {
-${lazyLoaderRegistry}
-};
-
-for (const [path, config] of Object.entries(lazyComponentRegistry)) {
-  globalThis['~clientComponents'][path] = config;
-  globalThis['~clientComponents'][config.id] = config;
-  const fullId = path + '#' + config.exportName;
-  globalThis['~clientComponents'][fullId] = config;
-  globalThis['~clientComponentPaths'][path] = config.id;
-}
-`
-
-        const allImports = externalImports
-        const allRegistrations = [registrations, externalRegistrations].filter(Boolean).join('\n')
-        const layoutCssImports = buildLayoutCssImportStatements(projectRoot, resolvedAlias)
-
-        return loadEntryClient(allImports, allRegistrations, layoutCssImports)
-      }
-
-      if (id === 'react-server-dom-rari/server') return loadRscReferences()
-
-      if (id === 'virtual:app-router-provider.tsx') {
-        const runtimeFile = resolveRuntimeDistFile('AppRouterProvider.mjs')
-        if (runtimeFile != null && runtimeFile !== '') return fs.readFileSync(runtimeFile, 'utf-8')
-
-        throw new Error(DIST_NOT_BUILT_ERROR)
-      }
-
-      if (id === 'virtual:client-router.tsx') {
-        const runtimeFile = resolveRuntimeDistFile('ClientRouter.mjs')
-        if (runtimeFile != null && runtimeFile !== '') return fs.readFileSync(runtimeFile, 'utf-8')
-
-        throw new Error(DIST_NOT_BUILT_ERROR)
-      }
-
-      if (id === 'virtual:loading-error-boundary.tsx') {
-        const runtimeFile = resolveRuntimeDistFile('LoadingErrorBoundary.mjs')
-        if (runtimeFile != null && runtimeFile !== '') return fs.readFileSync(runtimeFile, 'utf-8')
-
-        throw new Error(DIST_NOT_BUILT_ERROR)
-      }
-
-      if (id === 'virtual:error-boundary-wrapper.tsx') {
-        const runtimeFile = resolveRuntimeDistFile('ErrorBoundaryWrapper.mjs')
-        if (runtimeFile != null && runtimeFile !== '') {
-          const content = fs.readFileSync(runtimeFile, 'utf-8')
-          if (
-            !content.includes('import React') &&
-            !content.includes('from "react"') &&
-            !content.includes("from 'react'")
-          ) {
-            const useClientMatch = USE_CLIENT_DIRECTIVE_LINE_REGEX.exec(content)
-            if (useClientMatch) {
-              const directive = useClientMatch[0]
-              const rest = content.slice(directive.length)
-              return `
-${directive}import * as React from 'react';\n${rest}`
-            }
-
-            return `
-import * as React from 'react';\n${content}`
-          }
-
-          return content
-        }
-
-        throw new Error(DIST_NOT_BUILT_ERROR)
-      }
-
-      if (id === 'virtual:rsc-integration.ts') {
-        const code = await loadRscClientRuntime()
-        return code.replace(
-          RSC_CLIENT_IMPORT_REGEX,
-          (match, whitespace, quote) =>
-            `from${whitespace}${quote}virtual:react-flight-client.ts${quote}`,
-        )
-      }
-
-      if (id === 'virtual:react-flight-client.ts') {
-        let browserClientPath: string
-        let edgeClientPath: string
-        try {
-          const packageDir = path.dirname(
-            fileURLToPath(import.meta.resolve('react-server-dom-webpack/package.json')),
-          )
-          browserClientPath = path.join(
-            packageDir,
-            'cjs/react-server-dom-webpack-client.browser.production.js',
-          )
-          edgeClientPath = path.join(
-            packageDir,
-            'cjs/react-server-dom-webpack-client.edge.production.js',
-          )
-        } catch {
-          const rariDir = path.dirname(fileURLToPath(import.meta.url))
-          const nmDir = path.resolve(rariDir, '../../node_modules')
-          browserClientPath = path.join(
-            nmDir,
-            'react-server-dom-webpack/cjs/react-server-dom-webpack-client.browser.production.js',
-          )
-          edgeClientPath = path.join(
-            nmDir,
-            'react-server-dom-webpack/cjs/react-server-dom-webpack-client.edge.production.js',
-          )
-        }
-
-        const browserSource = fs.readFileSync(browserClientPath, 'utf-8')
-        const edgeSource = fs.readFileSync(edgeClientPath, 'utf-8')
-        const cjsSource = patchBrowserClientForFormActions(browserSource, edgeSource)
-
-        return {
-          code: `
-import * as React from 'react';
-import * as ReactDOM from 'react-dom';
-import { callServer as rariCallServer } from 'rari/runtime/call-server';
-
-const module = { exports: {} };
-const exports = module.exports;
-(function(module, exports, require) {
-${cjsSource}
-})(module, module.exports, function require(id) {
-  if (id === 'react') return React;
-  if (id === 'react-dom') return ReactDOM;
-  throw new Error('Cannot require "' + id + '" from react-server-dom-webpack client bundle');
-});
-export function createFromFetch(promise, options) {
-  return module.exports.createFromFetch(promise, {
-    ...options,
-    callServer: options?.callServer ?? rariCallServer,
-  });
-}
-export function createFromReadableStream(stream, options) {
-  return module.exports.createFromReadableStream(stream, {
-    ...options,
-    callServer: options?.callServer ?? rariCallServer,
-  });
-}
-export const createServerReference = module.exports.createServerReference;
-export const encodeReply = module.exports.encodeReply;
-export const createTemporaryReferenceSet = module.exports.createTemporaryReferenceSet;
-`,
-        }
       }
 
       if (id.endsWith('.mjs') && fs.existsSync(id)) {
@@ -2366,9 +1645,9 @@ export const createTemporaryReferenceSet = module.exports.createTemporaryReferen
 
       if (file.endsWith('.mdx')) invalidateMdxRegistryModuleCache()
 
-      const isReactFile = TSX_EXT_REGEX.test(file)
+      const isJsxFile = TSX_EXT_REGEX.test(file)
 
-      if (!isReactFile) return undefined
+      if (!isJsxFile) return undefined
 
       deleteComponentType(file)
       removeTrackedClientComponent(file)
@@ -2455,51 +1734,16 @@ export const createTemporaryReferenceSet = module.exports.createTemporaryReferen
     experimental: options.experimental,
     moduleAnalysisCache,
     mdx: options.mdx,
-    framework,
   })
 
-  const webpackRequirePatchPlugin: Plugin = {
-    name: 'rari:patch-react-server-dom-webpack',
-    transform(code) {
-      if (!code.includes('__webpack_require__') && !code.includes('__webpack_chunk_load__'))
-        return null
-
-      let modifiedCode = code
-
-      if (modifiedCode.includes('__webpack_chunk_load__'))
-        modifiedCode = modifiedCode.replaceAll('__webpack_chunk_load__', '__rari_chunk_load__')
-
-      if (modifiedCode.includes('__webpack_require__.u'))
-        modifiedCode = modifiedCode.replaceAll('__webpack_require__.u', '({}).u')
-
-      if (modifiedCode.includes('__webpack_require__'))
-        modifiedCode = modifiedCode.replaceAll('__webpack_require__', '__rari_rsc_require__')
-
-      if (modifiedCode !== code) {
-        return {
-          code: modifiedCode,
-          map: null,
-        }
-      }
-
-      return null
-    },
-  }
-
-  const plugins: Plugin[] = framework === 'solid' ? [] : [...createReactRefreshPlugins()]
-
-  if (framework === 'react' && options.compiler != null && options.compiler !== false)
-    plugins.push(createReactCompilerPlugin(options.compiler))
-
-  plugins.push(
+  const plugins: Plugin[] = [
     mainPlugin,
-    ...(framework === 'solid' ? [createSolidCompilerPlugin()] : []),
-    createSilenceReactDirectiveLogsPlugin(),
+    createSolidCompilerPlugin(),
+    createSilenceDirectiveLogsPlugin(),
     createStaticImagePlugin(),
     createFontPlugin(),
-    webpackRequirePatchPlugin,
     serverBuildPlugin,
-  )
+  ]
 
   if (options.proxy !== false) plugins.push(rariProxy(options.proxy ?? {}))
 
@@ -2532,7 +1776,6 @@ export type {
   ServerUseCacheConfig,
 } from './server/config'
 
-export type { RariCompilerOption, ReactCompilerOptions } from './transform/react-compiler'
 // oxlint-disable-next-line typescript/no-useless-empty-export side-effect import of ambient declarations
 export type {} from '@/ambient'
 

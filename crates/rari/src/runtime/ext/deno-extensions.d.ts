@@ -394,14 +394,7 @@ declare module 'ext:rari/http/cookies.ts' {}
 declare module 'ext:rari/http/headers.ts' {}
 declare module 'ext:rari/cache/use_cache.ts' {}
 declare module 'ext:rari/http/api_handler.ts' {}
-declare module 'ext:rari/react/component_loader.ts' {}
-declare module 'ext:rari/react/metadata_collector.ts' {}
-declare module 'ext:rari/react/metadata_head.ts' {}
+declare module 'ext:rari/component/component_loader.ts' {}
+declare module 'ext:rari/component/metadata_collector.ts' {}
 declare module 'ext:rari/rsc/rsc_modules.ts' {}
 declare module 'ext:rari/rsc/server_functions.ts' {}
-declare module 'ext:rari/rsc/client_registry.ts' {}
-
-declare module 'ext:rari/react/vendor_loaders.ts' {
-  export function loadFullReactVendors(): boolean
-  export function loadRscReactVendors(): boolean
-}

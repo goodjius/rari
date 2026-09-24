@@ -1,9 +1,18 @@
 'use client'
 
+import type { JSX } from 'solid-js'
 import type { ImageFormat } from './constants'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createEffect, createMemo, createSignal, onCleanup, Show } from 'solid-js'
 import { DEFAULT_DEVICE_SIZES, DEFAULT_FORMATS } from './constants'
 import { resolveOptimizedSizePlan } from './size-plan'
+import { buildImageUrl } from './url'
+
+export interface StaticImageData {
+  readonly src: string
+  readonly height: number
+  readonly width: number
+  readonly blurDataURL?: string
+}
 
 export interface ImageProps {
   readonly src: string | StaticImageData
@@ -17,301 +26,201 @@ export interface ImageProps {
   readonly blurDataURL?: string
   readonly fill?: boolean
   readonly sizes?: string
-  readonly style?: React.CSSProperties
-  readonly className?: string
-  readonly onLoad?: (event: React.SyntheticEvent<HTMLImageElement>) => void
-  readonly onError?: (event: React.SyntheticEvent<HTMLImageElement>) => void
+  readonly style?: JSX.CSSProperties
+  readonly class?: string
+  readonly onLoad?: (event: Event) => void
+  readonly onError?: (event: Event) => void
   readonly unoptimized?: boolean
   readonly loader?: (props: Readonly<{ src: string; width: number; quality: number }>) => string
   readonly overrideSrc?: string
   readonly decoding?: 'async' | 'sync' | 'auto'
 }
 
-export interface StaticImageData {
-  readonly src: string
-  readonly height: number
-  readonly width: number
-  readonly blurDataURL?: string
+function positive(value: number | undefined): number | undefined {
+  return value != null && value !== 0 ? value : undefined
 }
 
-function buildImageUrl(src: string, width: number, quality: number, format?: ImageFormat): string {
-  const params = new URLSearchParams()
-  params.set('url', src)
-  params.set('w', width.toString())
-  params.set('q', quality.toString())
-  if (format) params.set('f', format)
+// oxlint-disable-next-line typescript/prefer-readonly-parameter-types -- Solid props object
+export function Image(props: ImageProps): JSX.Element {
+  const [blurComplete, setBlurComplete] = createSignal(false)
+  const [showAltText, setShowAltText] = createSignal(false)
 
-  return `/_rari/image?${params}`
-}
+  const quality = () => props.quality ?? 75
+  const placeholder = () => props.placeholder ?? 'empty'
+  const loading = () => props.loading ?? 'lazy'
+  const fill = () => props.fill ?? false
+  const imgSrc = () => (typeof props.src === 'string' ? props.src : props.src.src)
+  const finalSrc = () =>
+    props.overrideSrc != null && props.overrideSrc !== '' ? props.overrideSrc : imgSrc()
+  const intrinsicWidth = () => (typeof props.src === 'string' ? undefined : props.src.width)
+  const intrinsicHeight = () => (typeof props.src === 'string' ? undefined : props.src.height)
+  const imgWidth = () => positive(props.width) ?? (fill() ? undefined : positive(intrinsicWidth()))
+  const imgHeight = () =>
+    positive(props.height) ?? (fill() ? undefined : positive(intrinsicHeight()))
+  const blurUrl = () =>
+    props.blurDataURL != null && props.blurDataURL !== ''
+      ? props.blurDataURL
+      : typeof props.src === 'string'
+        ? undefined
+        : props.src.blurDataURL
 
-export function Image({
-  src,
-  alt,
-  width,
-  height,
-  quality = 75,
-  preload = false,
-  loading = 'lazy',
-  placeholder = 'empty',
-  blurDataURL,
-  fill = false,
-  sizes,
-  style,
-  className,
-  onLoad,
-  onError,
-  unoptimized = false,
-  loader,
-  overrideSrc,
-  decoding,
-}: ImageProps) {
-  const imgSrc = typeof src === 'string' ? src : src.src
-  const intrinsicWidth = typeof src !== 'string' ? src.width : undefined
-  const intrinsicHeight = typeof src !== 'string' ? src.height : undefined
-  const imgWidth =
-    width != null && width !== 0
-      ? width
-      : !fill && intrinsicWidth != null && intrinsicWidth !== 0
-        ? intrinsicWidth
-        : undefined
-  const imgHeight =
-    height != null && height !== 0
-      ? height
-      : !fill && intrinsicHeight != null && intrinsicHeight !== 0
-        ? intrinsicHeight
-        : undefined
-  const imgBlurDataURL =
-    blurDataURL != null && blurDataURL !== ''
-      ? blurDataURL
-      : typeof src !== 'string'
-        ? src.blurDataURL
-        : undefined
-  const finalSrc = overrideSrc != null && overrideSrc !== '' ? overrideSrc : imgSrc
-  const shouldPreload = preload
-  const imgDecoding = decoding ?? (preload ? 'sync' : 'async')
-  const sizePlan = resolveOptimizedSizePlan({
-    fill,
-    width,
-    intrinsicWidth,
-  })
-  const shouldUseSrcSet = sizePlan.widths.length > 1 || sizePlan.widths[0] !== sizePlan.defaultWidth
-
-  const [blurComplete, setBlurComplete] = useState(false)
-  const [showAltText, setShowAltText] = useState(false)
-  const imgRef = useRef<HTMLImageElement>(null)
-  const onLoadRef = useRef(onLoad)
-  const pictureRef = useRef<HTMLPictureElement>(null)
-
-  useEffect(() => {
-    onLoadRef.current = onLoad
-  }, [onLoad])
-
-  const handleLoad = useCallback(
-    (event: React.SyntheticEvent<HTMLImageElement>) => {
-      const img = event.currentTarget
-
-      if (img.src && img.complete) {
-        if (placeholder === 'blur') setBlurComplete(true)
-
-        if (onLoadRef.current) onLoadRef.current(event)
-      }
-    },
-    [placeholder],
+  const sizePlan = createMemo(() =>
+    resolveOptimizedSizePlan({
+      fill: fill(),
+      width: props.width,
+      intrinsicWidth: intrinsicWidth(),
+    }),
   )
+  const useSrcSet = () => {
+    const plan = sizePlan()
+    return plan.widths.length > 1 || plan.widths[0] !== plan.defaultWidth
+  }
 
-  const handleError = useCallback(
-    (event: React.SyntheticEvent<HTMLImageElement>) => {
-      setShowAltText(true)
-      if (placeholder === 'blur') setBlurComplete(true)
+  const handleLoad = (event: Event) => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- currentTarget is the <img> this handler is bound to
+    const img = event.currentTarget as HTMLImageElement
+    if (img.src && img.complete) {
+      if (placeholder() === 'blur') setBlurComplete(true)
+      props.onLoad?.(event)
+    }
+  }
+  const handleError = (event: Event) => {
+    setShowAltText(true)
+    if (placeholder() === 'blur') setBlurComplete(true)
+    props.onError?.(event)
+  }
 
-      if (onError) onError(event)
-    },
-    [placeholder, onError],
-  )
-
-  useEffect(() => {
-    if (!shouldPreload) return undefined
+  createEffect(() => {
+    if (props.preload !== true) return
 
     const link = document.createElement('link')
     link.rel = 'preload'
     link.as = 'image'
 
-    const useResponsivePreload = shouldUseSrcSet && !unoptimized
-    const preloadSizes =
-      sizes != null && sizes !== '' ? sizes : useResponsivePreload || fill ? '100vw' : undefined
-    const preloadAvifOnly =
-      loader == null && DEFAULT_FORMATS.length === 1 && DEFAULT_FORMATS[0] === 'avif'
-    const preloadFormat: ImageFormat | undefined = preloadAvifOnly ? 'avif' : undefined
+    const plan = sizePlan()
+    const { loader } = props
+    const src = finalSrc()
+    const responsive = useSrcSet() && props.unoptimized !== true
+    const avifOnly = loader == null && DEFAULT_FORMATS.length === 1 && DEFAULT_FORMATS[0] === 'avif'
+    const format: ImageFormat | undefined = avifOnly ? 'avif' : undefined
+    const sizes =
+      props.sizes != null && props.sizes !== ''
+        ? props.sizes
+        : responsive || fill()
+          ? '100vw'
+          : undefined
 
-    if (unoptimized) {
+    if (props.unoptimized === true) {
       link.href =
-        loader != null ? loader({ src: finalSrc, width: sizePlan.defaultWidth, quality }) : finalSrc
-    } else if (useResponsivePreload) {
-      const srcSet = DEFAULT_DEVICE_SIZES.map(w =>
-        loader != null
-          ? `${loader({ src: finalSrc, width: w, quality })} ${w}w`
-          : `${buildImageUrl(finalSrc, w, quality, preloadFormat)} ${w}w`,
-      ).join(', ')
+        loader != null ? loader({ src, width: plan.defaultWidth, quality: quality() }) : src
+    } else if (responsive) {
       link.href =
         loader != null
-          ? loader({ src: finalSrc, width: sizePlan.defaultWidth, quality })
-          : buildImageUrl(finalSrc, sizePlan.defaultWidth, quality, preloadFormat)
-      link.setAttribute('imagesrcset', srcSet)
-      if (preloadSizes != null) link.setAttribute('imagesizes', preloadSizes)
-      if (preloadAvifOnly) link.type = 'image/avif'
-    } else if (loader != null) {
-      link.href = loader({
-        src: finalSrc,
-        width: sizePlan.defaultWidth,
-        quality,
-      })
-      if (preloadSizes != null) link.setAttribute('imagesizes', preloadSizes)
+          ? loader({ src, width: plan.defaultWidth, quality: quality() })
+          : buildImageUrl(src, plan.defaultWidth, quality(), format)
+      link.setAttribute(
+        'imagesrcset',
+        DEFAULT_DEVICE_SIZES.map(
+          w =>
+            `${loader != null ? loader({ src, width: w, quality: quality() }) : buildImageUrl(src, w, quality(), format)} ${w}w`,
+        ).join(', '),
+      )
+      if (avifOnly) link.type = 'image/avif'
     } else {
-      link.href = buildImageUrl(finalSrc, sizePlan.defaultWidth, quality)
-      if (preloadSizes != null) link.setAttribute('imagesizes', preloadSizes)
+      link.href =
+        loader != null
+          ? loader({ src, width: plan.defaultWidth, quality: quality() })
+          : buildImageUrl(src, plan.defaultWidth, quality())
     }
+    if (sizes != null) link.setAttribute('imagesizes', sizes)
 
-    document.head.appendChild(link)
+    document.head.append(link)
+    onCleanup(() => {
+      link.remove()
+    })
+  })
 
-    return () => {
-      if (link.parentNode === document.head) document.head.removeChild(link)
+  const imgStyle = (): JSX.CSSProperties => {
+    const base: JSX.CSSProperties = { ...props.style }
+    if (fill()) {
+      Object.assign(base, {
+        'position': 'absolute',
+        'inset': 0,
+        'width': '100%',
+        'height': '100%',
+        'object-fit': props.style?.['object-fit'] ?? 'cover',
+      })
     }
-  }, [
-    shouldPreload,
-    finalSrc,
-    sizePlan.defaultWidth,
-    quality,
-    sizes,
-    loader,
-    unoptimized,
-    fill,
-    shouldUseSrcSet,
-  ])
-
-  useEffect(() => {
-    if (shouldPreload || unoptimized || loading === 'eager') return undefined
-
-    const img = imgRef.current
-    if (!img) return undefined
-
-    const observer = new IntersectionObserver(
-      entries => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting) observer.unobserve(img)
+    if (placeholder() === 'blur') {
+      const blur = blurUrl()
+      if (blurComplete()) {
+        Object.assign(base, { filter: 'none', transition: 'filter 0.3s ease-out' })
+      } else if (blur != null && blur !== '') {
+        Object.assign(base, {
+          'background-image': `url(${blur})`,
+          'background-size': 'cover',
+          'background-position': 'center',
+          'filter': 'blur(20px)',
+          'transition': 'filter 0.3s ease-out',
         })
-      },
-      {
-        rootMargin: '50px',
-      },
-    )
-
-    observer.observe(img)
-
-    return () => {
-      observer.disconnect()
+      }
     }
-  }, [shouldPreload, unoptimized, loading])
-
-  const imgStyle: React.CSSProperties = {
-    ...style,
-    ...(fill && {
-      position: 'absolute',
-      inset: 0,
-      width: '100%',
-      height: '100%',
-      objectFit: style?.objectFit ?? 'cover',
-    }),
-    ...(placeholder === 'blur' &&
-      imgBlurDataURL != null &&
-      imgBlurDataURL !== '' &&
-      !blurComplete && {
-        backgroundImage: `url(${imgBlurDataURL})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        filter: 'blur(20px)',
-        transition: 'filter 0.3s ease-out',
-      }),
-    ...(placeholder === 'blur' &&
-      blurComplete && {
-        filter: 'none',
-        transition: 'filter 0.3s ease-out',
-      }),
+    return base
   }
 
-  if (unoptimized) {
-    const finalImgSrc = loader
-      ? loader({
-          src: finalSrc,
-          width: sizePlan.defaultWidth,
-          quality,
-        })
-      : finalSrc
-
-    return (
-      <img
-        ref={imgRef}
-        src={finalImgSrc}
-        alt={showAltText ? alt : ''}
-        width={fill ? undefined : imgWidth}
-        height={fill ? undefined : imgHeight}
-        loading={shouldPreload ? 'eager' : loading}
-        fetchPriority={shouldPreload ? 'high' : 'auto'}
-        decoding={imgDecoding}
-        onLoad={placeholder === 'blur' || onLoad != null ? handleLoad : undefined}
-        onError={handleError}
-        style={imgStyle}
-        className={className}
-      />
-    )
+  const srcSet = (format?: ImageFormat) => {
+    const { loader } = props
+    const { widths } = sizePlan()
+    return widths
+      .map(
+        w =>
+          `${loader != null ? loader({ src: finalSrc(), width: w, quality: quality() }) : buildImageUrl(finalSrc(), w, quality(), format)} ${w}w`,
+      )
+      .join(', ')
   }
-
-  const sizesArray = sizePlan.widths
-  const defaultWidth = sizePlan.defaultWidth
-
-  const buildSrcSet = (format?: ImageFormat) => {
-    if (loader)
-      return sizesArray.map(w => `${loader({ src: finalSrc, width: w, quality })} ${w}w`).join(', ')
-
-    return sizesArray.map(w => `${buildImageUrl(finalSrc, w, quality, format)} ${w}w`).join(', ')
+  const mainSrc = () => {
+    const width = sizePlan().defaultWidth
+    if (props.unoptimized === true)
+      return props.loader != null
+        ? props.loader({ src: finalSrc(), width, quality: quality() })
+        : finalSrc()
+    return props.loader != null
+      ? props.loader({ src: finalSrc(), width, quality: quality() })
+      : buildImageUrl(finalSrc(), width, quality())
   }
+  const resolvedSizes = () =>
+    props.sizes != null && props.sizes !== '' ? props.sizes : useSrcSet() ? '100vw' : undefined
+  const optimizedSet = () => props.unoptimized !== true && useSrcSet()
 
-  const mainSrc = loader
-    ? loader({ src: finalSrc, width: defaultWidth, quality })
-    : buildImageUrl(finalSrc, defaultWidth, quality)
-
-  const resolvedSizes =
-    sizes != null && sizes !== '' ? sizes : shouldUseSrcSet ? '100vw' : undefined
-
-  const imgElement = (
+  const img = () => (
     <img
-      ref={imgRef}
-      src={mainSrc}
-      srcSet={shouldUseSrcSet ? buildSrcSet() : undefined}
-      sizes={shouldUseSrcSet ? resolvedSizes : undefined}
-      alt={showAltText ? alt : ''}
-      width={fill ? undefined : imgWidth}
-      height={fill ? undefined : imgHeight}
-      loading={shouldPreload ? 'eager' : loading}
-      fetchPriority={shouldPreload ? 'high' : 'auto'}
-      decoding={imgDecoding}
-      onLoad={placeholder === 'blur' || onLoad != null ? handleLoad : undefined}
+      src={mainSrc()}
+      srcset={optimizedSet() ? srcSet() : undefined}
+      sizes={optimizedSet() ? resolvedSizes() : undefined}
+      alt={showAltText() ? props.alt : ''}
+      width={fill() ? undefined : imgWidth()}
+      height={fill() ? undefined : imgHeight()}
+      loading={props.preload === true ? 'eager' : loading()}
+      fetchpriority={props.preload === true ? 'high' : 'auto'}
+      decoding={props.decoding ?? (props.preload === true ? 'sync' : 'async')}
+      onLoad={placeholder() === 'blur' || props.onLoad != null ? handleLoad : undefined}
       onError={handleError}
-      style={imgStyle}
-      className={className}
+      style={imgStyle()}
+      class={props.class}
     />
   )
 
-  if (!shouldUseSrcSet) return imgElement
-
   return (
-    <picture ref={pictureRef}>
-      {DEFAULT_FORMATS.includes('avif') && (
-        <source type="image/avif" srcSet={buildSrcSet('avif')} sizes={resolvedSizes} />
-      )}
-      {DEFAULT_FORMATS.includes('webp') && (
-        <source type="image/webp" srcSet={buildSrcSet('webp')} sizes={resolvedSizes} />
-      )}
-      {imgElement}
-    </picture>
+    <Show when={optimizedSet()} fallback={img()}>
+      <picture>
+        <Show when={DEFAULT_FORMATS.includes('avif')}>
+          <source type="image/avif" srcset={srcSet('avif')} sizes={resolvedSizes()} />
+        </Show>
+        <Show when={DEFAULT_FORMATS.includes('webp')}>
+          <source type="image/webp" srcset={srcSet('webp')} sizes={resolvedSizes()} />
+        </Show>
+        {img()}
+      </picture>
+    </Show>
   )
 }

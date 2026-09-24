@@ -270,25 +270,7 @@ impl RscHtmlRenderer {
             }
         }
 
-        // Solid's HMR needs no global preamble (solid-refresh's Babel plugin wires each
-        // module itself), so only React gets the refresh runtime. Mirrors
-        // packages/rari/src/vite/client-head.ts `buildDevClientHead`.
-        if !crate::server::config::Config::get()
-            .is_some_and(|config| config.framework == crate::server::config::Framework::Solid)
-        {
-            let _ = write!(
-                head,
-                r#"<script type="module">
-import {{ injectIntoGlobalHook }} from 'http://{host}:{vite_port}/@react-refresh'
-injectIntoGlobalHook(window)
-window.$RefreshReg$ = () => {{}}
-window.$RefreshSig$ = () => type => type
-window.__vite_plugin_react_preamble_installed__ = true
-</script>
-"#
-            );
-        }
-
+        // solid-refresh's Babel plugin wires each module itself; no global preamble is needed.
         let _ = write!(
             head,
             r#"<script type="module" src="http://{host}:{vite_port}/@vite/client"></script>
@@ -674,43 +656,6 @@ import 'http://{host}:{vite_port}/@id/virtual:rari-entry-client';
         found
     }
 
-    pub(crate) async fn assemble_document(
-        &self,
-        html_content: String,
-        cache_template: bool,
-        is_dev_mode: bool,
-        vite_host: &str,
-        vite_port: u16,
-        css_links: &[String],
-    ) -> Result<String, RariError> {
-        let is_complete_document = html_content.trim_start().starts_with("<!DOCTYPE")
-            || html_content.trim_start().cow_to_lowercase().starts_with("<html");
-
-        if !is_complete_document {
-            return Err(RariError::internal(
-                "Expected a complete HTML document from the root layout (<html>...</html>)"
-                    .to_string(),
-            ));
-        }
-
-        let client_head = if is_dev_mode {
-            String::new()
-        } else {
-            self.load_template(cache_template, is_dev_mode, vite_host, vite_port).await?
-        };
-
-        let mut final_html = html_content;
-        final_html = Self::inject_head_tags(&final_html, &client_head);
-        final_html = Self::inject_css_links(&final_html, css_links);
-
-        let trimmed_lower = final_html.trim_start().cow_to_lowercase();
-        if !trimmed_lower.starts_with("<!doctype") {
-            final_html = format!("<!DOCTYPE html>\n{final_html}");
-        }
-
-        Ok(final_html)
-    }
-
     fn escape_html_attribute(text: &str) -> String {
         text.cow_replace('&', "&amp;")
             .cow_replace('"', "&quot;")
@@ -795,30 +740,25 @@ mod tests {
     #[test]
     fn test_generate_dev_client_head() {
         let template = RscHtmlRenderer::generate_dev_client_head_with_css("localhost", 5173, None);
-        assert!(template.contains("http://localhost:5173/@react-refresh"));
-        assert!(template.contains("injectIntoGlobalHook"));
-        assert!(template.contains("__vite_plugin_react_preamble_installed__"));
+        assert!(!template.contains("@react-refresh"));
         assert!(template.contains("http://localhost:5173/@vite/client"));
         assert!(template.contains("http://localhost:5173/@id/virtual:rari-entry-client"));
         assert!(!template.contains("<!DOCTYPE html>"));
         assert!(!template.contains(r#"id="root""#));
         assert!(!template.contains("rel=\"stylesheet\""));
         assert!(
-            template.find("@react-refresh").expect("preamble")
-                < template.find("@vite/client").expect("vite client")
+            template.find("@vite/client").expect("vite client")
+                < template.find("virtual:rari-entry-client").expect("entry")
         );
 
         let remote = RscHtmlRenderer::generate_dev_client_head_with_css("192.168.1.10", 5173, None);
-        assert!(remote.contains("http://192.168.1.10:5173/@react-refresh"));
         assert!(remote.contains("http://192.168.1.10:5173/@vite/client"));
         assert!(remote.contains("http://192.168.1.10:5173/@id/virtual:rari-entry-client"));
 
         let bind_all = RscHtmlRenderer::generate_dev_client_head_with_css("0.0.0.0", 5173, None);
-        assert!(bind_all.contains("http://localhost:5173/@react-refresh"));
         assert!(bind_all.contains("http://localhost:5173/@vite/client"));
 
         let ipv6 = RscHtmlRenderer::generate_dev_client_head_with_css("::1", 5173, None);
-        assert!(ipv6.contains("http://[::1]:5173/@react-refresh"));
         assert!(ipv6.contains("http://[::1]:5173/@vite/client"));
         assert!(!ipv6.contains("http://::1:5173"));
     }
@@ -1161,35 +1101,5 @@ import '/entry.js';
                 "/page.css".to_string(),
             ]
         );
-    }
-
-    #[tokio::test]
-    async fn test_assemble_document_rejects_fragment() {
-        let runtime = Arc::new(JsExecutionRuntime::new(None));
-        let renderer = RscHtmlRenderer::new(runtime);
-
-        let err = renderer
-            .assemble_document("<main>Page</main>".to_string(), false, true, "localhost", 5173, &[])
-            .await
-            .expect_err("fragment HTML should be rejected");
-
-        assert!(err.to_string().contains("complete HTML document"));
-    }
-
-    #[tokio::test]
-    async fn test_assemble_document_complete_doc_injects_css() {
-        let runtime = Arc::new(JsExecutionRuntime::new(None));
-        let renderer = RscHtmlRenderer::new(runtime);
-        let css_links = vec!["/extra.css".to_string()];
-        let html_content =
-            "<!DOCTYPE html><html><head></head><body><main>Page</main></body></html>";
-
-        let html = renderer
-            .assemble_document(html_content.to_string(), false, true, "localhost", 5173, &css_links)
-            .await
-            .expect("assemble_document should succeed");
-
-        assert!(html.contains(r#"<link rel="stylesheet" href="/extra.css">"#));
-        assert!(html.contains("<main>Page</main>"));
     }
 }

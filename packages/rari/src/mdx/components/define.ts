@@ -1,23 +1,22 @@
-import type { ComponentType } from 'react'
+import type { Component } from 'solid-js'
 import { isRecord } from '@/shared/utils/type-guards'
 import { scanMdxComponentNames } from '../scan/names'
-import { createMDXClientReferences } from './client-refs'
 
 export interface MdxComponentEntry {
   readonly name: string
-  readonly component: ComponentType<any>
+  readonly component: Component<any>
   readonly id: string
   readonly client?: boolean
   readonly exportName?: string
 }
 
-type MdxComponentsInput = Readonly<Record<string, ComponentType<any> | MdxComponentEntry>>
+type MdxComponentsInput = Readonly<Record<string, Component<any> | MdxComponentEntry>>
 
 function isResolvedEntry(value: unknown): value is MdxComponentEntry {
   return isRecord(value) && typeof value.id === 'string' && 'component' in value
 }
 
-/* oxlint-disable typescript/prefer-readonly-parameter-types union with react's ComponentType loses its allow-listed alias and expands to mutable ComponentClass/FunctionComponent members */
+/* oxlint-disable typescript/prefer-readonly-parameter-types Solid's Component type expands to a mutable function signature */
 function isEntryArray(
   input: readonly MdxComponentEntry[] | MdxComponentsInput,
 ): input is readonly MdxComponentEntry[] {
@@ -57,27 +56,13 @@ export function defineMdxComponents(
 
   return (content: string) => {
     const result: Record<string, any> = {}
-    const clientComponents: Record<string, { component: any; id: string; exportName?: string }> = {}
     const usedComponentNames = new Set(scanMdxComponentNames(content))
 
+    // Client components arrive already wrapped as islands by the rari vite plugin.
     for (const entry of registry) {
-      if (!usedComponentNames.has(entry.name)) continue
-
-      if (entry.client === false) {
-        result[entry.name] = entry.component
-        continue
-      }
-
-      clientComponents[entry.name] = {
-        component: entry.component,
-        id: entry.id,
-        exportName: entry.exportName,
-      }
+      if (usedComponentNames.has(entry.name)) result[entry.name] = entry.component
     }
 
-    return {
-      ...result,
-      ...createMDXClientReferences(clientComponents),
-    }
+    return result
   }
 }

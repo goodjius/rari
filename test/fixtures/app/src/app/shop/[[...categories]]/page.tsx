@@ -7,8 +7,8 @@ function normalizeCategories(categories: string | readonly string[] | undefined)
   return [...categories]
 }
 
-export default function ShopPage({ params }: PageProps) {
-  const { categories } = params
+export default function ShopPage(props: PageProps) {
+  const { categories } = props.params
   const categoriesArray = normalizeCategories(categories)
   const hasCategories = categoriesArray.length > 0
 
@@ -22,9 +22,7 @@ export default function ShopPage({ params }: PageProps) {
       {hasCategories ? (
         <div data-testid="categories" data-categories={JSON.stringify(categoriesArray)}>
           {categoriesArray.map((category, i) => (
-            <span key={category} data-testid={`category-${i}`}>
-              {category}
-            </span>
+            <span data-testid={`category-${i}`}>{category}</span>
           ))}
         </div>
       ) : (

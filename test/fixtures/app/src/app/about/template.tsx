@@ -1,6 +1,5 @@
-import type { ReactNode } from 'react'
-import { AboutTemplateClient } from './template-client'
+import type { JSX } from 'solid-js'
 
-export default function AboutTemplate({ children }: Readonly<{ children: ReactNode }>) {
-  return <AboutTemplateClient>{children}</AboutTemplateClient>
+export default function AboutTemplate(props: { readonly children: JSX.Element }) {
+  return <div data-testid="about-template">{props.children}</div>
 }

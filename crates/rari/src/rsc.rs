@@ -35,7 +35,7 @@ pub fn extract_dependencies(code: &str) -> DependencyList {
             && let Some(import_path) = captures.get(2)
         {
             let import_path_str = import_path.as_str().to_string();
-            if !import_path_str.starts_with("react")
+            if !import_path_str.starts_with("solid-js")
                 && (import_path_str.starts_with('.')
                     || import_path_str.starts_with('/')
                     || import_path_str.contains('/'))
@@ -517,8 +517,8 @@ mod tests {
     #[test]
     fn test_extract_dependencies() {
         let code = r"
-        import React from 'react';
-        import { useState } from 'react';
+        import { createSignal } from 'solid-js';
+        import { render } from 'solid-js/web';
         import Button from './Button';
         import { Card, CardContent } from '../components/Card';
 
@@ -558,8 +558,7 @@ mod tests {
             .register_component(
                 "TestComponent",
                 "function TestComponent() { return <div>Test</div>; }",
-                "function TestComponent() { return React.createElement('div', null, 'Test'); }"
-                    .to_string(),
+                "function TestComponent() { return _tmpl$(); }".to_string(),
                 smallvec![],
             )
             .expect("Failed to register test component");
@@ -567,10 +566,7 @@ mod tests {
         let component =
             registry.get_component("TestComponent").expect("TestComponent should be registered");
         assert_eq!(component.id, "TestComponent");
-        assert_eq!(
-            component.transformed_source,
-            "function TestComponent() { return React.createElement('div', null, 'Test'); }"
-        );
+        assert_eq!(component.transformed_source, "function TestComponent() { return _tmpl$(); }");
 
         assert!(registry.get_component("NonExistentComponent").is_none());
     }

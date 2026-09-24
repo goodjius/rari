@@ -28,7 +28,7 @@ use sys_traits::impls::RealSys;
 use super::{
     cache::ModuleCaching,
     config::RuntimeConfig,
-    react_vendor, solid_vendor,
+    solid_vendor,
     storage::ModuleStorage,
     stubs::{
         FALLBACK_MODULE_TEMPLATE, LOADER_STUB_TEMPLATE, RARI_CACHE_STUB, RARI_CALL_SERVER_STUB,
@@ -65,8 +65,6 @@ const RELATIVE_CURRENT_PATH: &str = "./";
 const RELATIVE_UP_PATH: &str = "../";
 const RARI_INTERNAL_PATH: &str = "/rari_internal/";
 const LOADER_STUB_PREFIX: &str = "load_";
-const RSC_REFERENCES_SPECIFIER: &str = "react-server-dom-rari/server";
-const RARI_RSC_REFERENCES_EXPORT: &str = "rari/runtime/rsc-references";
 const RARI_MDX_REGISTRY_SPECIFIER: &str = "rari/mdx/registry";
 const RARI_MDX_REGISTRY_INTERNAL: &str = "file:///rari_internal/mdx-registry.js";
 const RARI_MDX_REGISTRY_MANIFEST: &str = "dist/server/manifest.json";
@@ -126,8 +124,6 @@ fn is_virtual_referrer(referrer: &str) -> bool {
         || referrer.contains(RARI_COMPONENT_PATH)
         || referrer.contains(RARI_INTERNAL_PATH)
         || referrer.contains(RARI_STUB_PATH)
-        || referrer.contains("/react_vendor/")
-        || referrer.starts_with(react_vendor::NODE_VENDOR_PREFIX)
         || referrer.contains("/solid_vendor/")
         || referrer.starts_with(solid_vendor::NODE_VENDOR_PREFIX)
         || referrer.contains("/rari_hmr/")
@@ -706,20 +702,6 @@ export default {{}};
         None
     }
 
-    fn handle_react_vendor_shim(
-        specifier_str: &str,
-        module_specifier: &ModuleSpecifier,
-    ) -> Option<ModuleLoadResponse> {
-        let module_name = specifier_str.strip_prefix(react_vendor::NODE_VENDOR_PREFIX)?;
-        let source = react_vendor::reexport_shim_source(module_name)?;
-        Some(ModuleLoadResponse::Sync(Ok(ModuleSource::new(
-            ModuleType::JavaScript,
-            ModuleSourceCode::String(source.into()),
-            module_specifier,
-            None,
-        ))))
-    }
-
     fn handle_solid_vendor_shim(
         specifier_str: &str,
         module_specifier: &ModuleSpecifier,
@@ -975,26 +957,8 @@ impl ModuleLoader for RariModuleLoader {
         }
 
         // App `file://` modules must not resolve to `ext:` (deno_core 0.408+).
-        // Map to `node:rari/react-vendor/*` shims that `export *` from the real
-        // `ext:rari/react/vendor/*` modules (`node:` may import `ext:`).
-        if specifier.contains("/react_vendor/")
-            || specifier.starts_with(react_vendor::NODE_VENDOR_PREFIX)
-        {
-            let raw_name = specifier
-                .strip_prefix(react_vendor::NODE_VENDOR_PREFIX)
-                .or_else(|| specifier.rsplit("/react_vendor/").next())
-                .unwrap_or("");
-            let Some(module_name) = react_vendor::normalize_vendor_module_name(raw_name) else {
-                return Err(JsErrorBox::generic(format!(
-                    "Unknown React vendor module: {raw_name}"
-                )));
-            };
-            let url = ModuleSpecifier::parse(&react_vendor::node_vendor_specifier(&module_name))
-                .map_err(|err| JsErrorBox::generic(format!("Invalid URL: {err}")))?;
-            return Ok(url);
-        }
-
-        // Same rationale as the react_vendor mapping above, for the Solid PoC vendor set.
+        // Map to `node:rari/solid-vendor/*` shims that `export *` from the real
+        // `ext:rari/solid/vendor/*` modules (`node:` may import `ext:`).
         if specifier.contains("/solid_vendor/")
             || specifier.starts_with(solid_vendor::NODE_VENDOR_PREFIX)
         {
@@ -1064,76 +1028,6 @@ impl ModuleLoader for RariModuleLoader {
         }
 
         if !specifier.contains("://") && !specifier.starts_with('/') {
-            if specifier == "react" || specifier.starts_with("react/") {
-                let react_url = if matches!(
-                    specifier,
-                    "react/jsx-runtime"
-                        | "react/jsx-runtime.js"
-                        | "react/jsx-dev-runtime"
-                        | "react/jsx-dev-runtime.js"
-                ) {
-                    react_vendor::node_vendor_specifier("react-jsx-runtime.js")
-                } else if matches!(
-                    specifier,
-                    "react/compiler-runtime" | "react/compiler-runtime.js"
-                ) {
-                    react_vendor::node_vendor_specifier("react-compiler-runtime.js")
-                } else {
-                    react_vendor::node_vendor_specifier("react.js")
-                };
-                return self.resolve(&react_url, referrer, kind);
-            }
-
-            if matches!(
-                specifier,
-                "react-dom/server" | "react-dom/server.browser" | "react-dom/server.node"
-            ) || (specifier.starts_with("react-dom/")
-                && !matches!(specifier, "react-dom/client" | "react-dom/client.js" | "react-dom"))
-            {
-                return self.resolve(
-                    &react_vendor::node_vendor_specifier("react-dom-server.js"),
-                    referrer,
-                    kind,
-                );
-            }
-
-            if matches!(specifier, "react-dom") {
-                return self.resolve(
-                    &react_vendor::node_vendor_specifier("react-dom.js"),
-                    referrer,
-                    kind,
-                );
-            }
-
-            if matches!(
-                specifier,
-                "react-server-dom-webpack/server"
-                    | "react-server-dom-webpack/server.browser"
-                    | "react-server-dom-webpack/server.node"
-                    | "react-server-dom-webpack/server.edge"
-            ) {
-                return self.resolve(
-                    &react_vendor::node_vendor_specifier("react-server-dom-webpack-server.js"),
-                    referrer,
-                    kind,
-                );
-            }
-
-            if matches!(
-                specifier,
-                "react-server-dom-webpack/client"
-                    | "react-server-dom-webpack/client.browser"
-                    | "react-server-dom-webpack/client.node"
-                    | "react-server-dom-webpack/client.edge"
-            ) {
-                return self.resolve(
-                    &react_vendor::node_vendor_specifier("react-server-dom-webpack-client.js"),
-                    referrer,
-                    kind,
-                );
-            }
-
-            // Solid PoC vendor resolution, mirroring the react/react-dom branches above.
             if specifier == "solid-js" {
                 return self.resolve(
                     &solid_vendor::node_vendor_specifier("solid-js.js"),
@@ -1176,10 +1070,6 @@ impl ModuleLoader for RariModuleLoader {
                     );
                     return self.resolve(&rari_url, referrer, kind);
                 }
-            }
-
-            if specifier == RSC_REFERENCES_SPECIFIER {
-                return self.resolve_via_node_resolver(RARI_RSC_REFERENCES_EXPORT, referrer);
             }
 
             if specifier == RARI_MDX_REGISTRY_SPECIFIER {
@@ -1253,10 +1143,6 @@ impl ModuleLoader for RariModuleLoader {
         }
 
         if let Some(response) = Self::handle_rari_stub_modules(&specifier_str, module_specifier) {
-            return response;
-        }
-
-        if let Some(response) = Self::handle_react_vendor_shim(&specifier_str, module_specifier) {
             return response;
         }
 

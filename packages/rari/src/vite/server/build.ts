@@ -32,7 +32,7 @@ import {
   getComponentId as getSharedComponentId,
   getProjectRelativePath as getSharedProjectRelativePath,
 } from '../analysis/component-ids'
-import { analyzeModuleSource } from '../analysis/directives'
+import { analyzeModuleSource, collectExportNames } from '../analysis/directives'
 import {
   filterExternalDependencies,
   filterRelativeImportSources,
@@ -48,7 +48,6 @@ import {
   resolveMdxPluginOptions,
   resolveMdxRegistryEntries,
 } from '../mdx/registry'
-import { collectExportNames } from '../transform/client-reference-stub'
 import { collectComponentServerCssSources, resolveLayoutCssServerSkipSet } from './css-server-asset'
 import {
   buildRscEntriesWithViteEnvironment,
@@ -82,24 +81,6 @@ const RARI_DIST_DIR = path.dirname(fileURLToPath(import.meta.url))
 const RARI_PACKAGE_ROOT = path.dirname(RARI_DIST_DIR)
 function isRariInternalPath(filePath: string): boolean {
   return filePath.startsWith(RARI_PACKAGE_ROOT)
-}
-
-function resolveErrorBoundarySourcePath(): string | null {
-  const devSource = path.join(
-    RARI_PACKAGE_ROOT,
-    'src',
-    'runtime',
-    'boundaries',
-    'error-boundary-wrapper.tsx',
-  )
-  if (fs.existsSync(devSource)) return devSource
-
-  try {
-    const publishedPath = fileURLToPath(import.meta.resolve('rari/runtime/ErrorBoundaryWrapper'))
-    if (fs.existsSync(publishedPath)) return publishedPath
-  } catch {}
-
-  return null
 }
 
 function isErrorBoundaryWrapperPath(filePath: string): boolean {
@@ -181,7 +162,6 @@ export interface ServerBuildOptions {
     readonly useCacheRemote?: ServerCacheLayerConfig
   }
   readonly mdx?: MdxPluginOptions
-  readonly framework?: 'react' | 'solid'
 }
 
 export interface ComponentRebuildResult {
@@ -206,7 +186,6 @@ type ResolvedServerBuildOptions = Required<
     | 'experimental'
     | 'moduleAnalysisCache'
     | 'mdx'
-    | 'framework'
   >
 > & {
   serverConfigPath: string
@@ -218,7 +197,6 @@ type ResolvedServerBuildOptions = Required<
   origin?: ServerBuildOptions['origin']
   htmlLimitedBots?: ServerBuildOptions['htmlLimitedBots']
   define?: ServerBuildOptions['define']
-  framework: NonNullable<ServerBuildOptions['framework']>
   experimental?: ServerBuildOptions['experimental']
   moduleAnalysisCache?: ModuleAnalysisCache
   mdx?: ServerBuildOptions['mdx']
@@ -509,7 +487,6 @@ export class ServerComponentBuilder {
       htmlLimitedBots: options.htmlLimitedBots,
       experimental: options.experimental,
       mdx: options.mdx,
-      framework: options.framework ?? 'react',
     }
   }
 
@@ -790,7 +767,6 @@ export class ServerComponentBuilder {
     if (this.options.action) serverConfig.action = this.options.action
     if (this.options.jsPoolSize != null) serverConfig.jsPoolSize = this.options.jsPoolSize
     // Read by the Rust server (crates/rari/src/server/config.rs) to pick the render pipeline.
-    if (this.options.framework === 'solid') serverConfig.framework = 'solid'
     const origin = this.options.origin?.trim().replace(/\/+$/, '')
     if (origin != null && origin !== '') serverConfig.origin = origin
     if (this.options.htmlLimitedBots != null)
@@ -958,14 +934,6 @@ export class ServerComponentBuilder {
       } catch {}
     }
 
-    try {
-      const errorBoundarySource = resolveErrorBoundarySourcePath()
-      if (errorBoundarySource != null && errorBoundarySource !== '') {
-        const code = fs.readFileSync(errorBoundarySource, 'utf-8')
-        clientFiles.push({ filePath: errorBoundarySource, code })
-      }
-    } catch {}
-
     const externalSources: Array<{
       componentId: string
       filePath: string
@@ -1119,16 +1087,11 @@ export class ServerComponentBuilder {
       'utf-8',
     )
 
-    if (this.options.framework === 'solid') {
-      // Same `id#export -> { id, chunks, name }` shape as the React manifest, but a
-      // separate file: it means something different operationally (islands, not
-      // Flight import rows) - see crates/rari/src/rendering/base/js/solid_islands.ts.
-      await fs.promises.writeFile(
-        path.join(serverOutDir, 'solid-island-manifest.json'),
-        JSON.stringify(clientReferenceManifest),
-        'utf-8',
-      )
-    }
+    await fs.promises.writeFile(
+      path.join(serverOutDir, 'solid-island-manifest.json'),
+      JSON.stringify(clientReferenceManifest),
+      'utf-8',
+    )
   }
 
   private resolveExternalClientSourcePath(

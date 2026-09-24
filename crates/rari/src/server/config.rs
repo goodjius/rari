@@ -485,28 +485,6 @@ impl Default for RscConfig {
     }
 }
 
-/// UI framework the built app targets; selects the render pipeline at startup.
-/// Written to `dist/server/config.json` by the Vite plugin (`framework: 'solid'`);
-/// `RARI_FRAMEWORK` overrides it at deploy time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum Framework {
-    #[default]
-    React,
-    Solid,
-}
-
-impl Framework {
-    fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "react" => Some(Self::React),
-            "solid" => Some(Self::Solid),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[non_exhaustive]
 pub struct Config {
@@ -537,8 +515,6 @@ pub struct Config {
     /// Precompiled override from `html_limited_bots`; `None` uses the default list.
     #[serde(skip)]
     pub html_limited_bots_regex: Option<regex::Regex>,
-    #[serde(default)]
-    pub framework: Framework,
 }
 
 impl Config {
@@ -840,16 +816,6 @@ impl Config {
                     }
                 }
 
-                if let Some(name) = config_data.get("framework").and_then(serde_json::Value::as_str)
-                {
-                    match Framework::parse(name) {
-                        Some(framework) => config.framework = framework,
-                        None => tracing::warn!(
-                            "Unknown framework {name:?} in config.json; expected \"react\" or \"solid\""
-                        ),
-                    }
-                }
-
                 if let Some(pattern) =
                     config_data.get("htmlLimitedBots").and_then(serde_json::Value::as_str)
                 {
@@ -992,11 +958,6 @@ impl Config {
                 return Err(ConfigError::Config("RARI_JS_POOL_SIZE must be >= 1".to_string()));
             }
             config.server.js_pool_size = pool_size;
-        }
-
-        if let Ok(name) = env::var("RARI_FRAMEWORK") {
-            config.framework = Framework::parse(&name)
-                .ok_or_else(|| ConfigError::Config("RARI_FRAMEWORK".to_string()))?;
         }
 
         if let Ok(pattern) = env::var("RARI_HTML_LIMITED_BOTS") {
@@ -1473,44 +1434,6 @@ mod tests {
         match prev {
             Some(v) => unsafe { env::set_var("RARI_JS_POOL_SIZE", v) },
             None => unsafe { env::remove_var("RARI_JS_POOL_SIZE") },
-        }
-    }
-
-    #[test]
-    fn test_framework_config_json_and_env_precedence() {
-        let temp_dir = env::temp_dir().join(format!("rari_test_framework_{}", process::id()));
-        let dist_server_dir = temp_dir.join("dist").join("server");
-        fs::create_dir_all(&dist_server_dir).unwrap();
-
-        let prev = env::var("RARI_FRAMEWORK").ok();
-        // SAFETY: test-only env mutation; restored below. Cases share one test so
-        // parallel suite workers cannot race on this process-global var.
-        unsafe { env::remove_var("RARI_FRAMEWORK") };
-
-        assert_eq!(
-            Config::from_env_with_base(Some(&temp_dir)).unwrap().framework,
-            Framework::React
-        );
-
-        fs::write(dist_server_dir.join("config.json"), r#"{"framework":"solid"}"#).unwrap();
-        assert_eq!(
-            Config::from_env_with_base(Some(&temp_dir)).unwrap().framework,
-            Framework::Solid
-        );
-
-        unsafe { env::set_var("RARI_FRAMEWORK", "react") };
-        assert_eq!(
-            Config::from_env_with_base(Some(&temp_dir)).unwrap().framework,
-            Framework::React
-        );
-
-        unsafe { env::set_var("RARI_FRAMEWORK", "vue") };
-        assert!(Config::from_env_with_base(Some(&temp_dir)).is_err());
-
-        let _ = fs::remove_dir_all(&temp_dir);
-        match prev {
-            Some(v) => unsafe { env::set_var("RARI_FRAMEWORK", v) },
-            None => unsafe { env::remove_var("RARI_FRAMEWORK") },
         }
     }
 

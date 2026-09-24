@@ -1,9 +1,3 @@
-import { LoadingReveal } from '../page-transition'
-
-export default function SuspenseStreamingLoading() {
-  return (
-    <LoadingReveal>
-      <div data-testid="page-loading">Loading...</div>
-    </LoadingReveal>
-  )
+export default function Loading() {
+  return <div data-testid="page-loading">Loading...</div>
 }

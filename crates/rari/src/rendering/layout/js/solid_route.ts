@@ -2,8 +2,8 @@
 /// <reference path="../../types.d.ts" />
 
 /**
- * Route-level Solid rendering for the real server path (the Solid counterpart
- * to layout/core.rs's React composition scripts + streaming_fizz.ts). Rust
+ * Route-level Solid rendering for the real server path (see
+ * layout/core.rs). Rust
  * passes only JSON (component ids, props, head HTML); composition happens
  * here because Solid's `children` getters and closures are painful to
  * string-splice from a Rust `format!`.
@@ -58,8 +58,7 @@ function rariSolidNonEmpty(value: unknown): value is string {
 
 /**
  * `PageMetadata` (JSON from `metadata_collector.ts` / Rust) -> head tags as an HTML
- * string. Mirrors the field mapping of react/metadata_head.ts's
- * `buildMetadataHeadElements`, minus its React-element cloning.
+ * string. Emits the same tags the old element-based builder did.
  */
 function rariSolidMetadataToHtml(metadata: Record<string, unknown> | null): string {
   const m = metadata ?? {}
@@ -129,8 +128,7 @@ function rariSolidMetadataToHtml(metadata: Record<string, unknown> | null): stri
  * Buffers the stream until the first `</head>`, injects `headHtml` there (the
  * client head - CSS links, dev/prod client entry - plus hydration bootstrap
  * and metadata), and strips a leading doctype (the Rust side already writes
- * the `<!DOCTYPE html>` shell). Same idea as streaming_fizz.ts's
- * `rariInjectHeadContent`/`rariStripLeadingDoctype`, over Solid's output.
+ * the `<!DOCTYPE html>` shell). Over Solid's output.
  */
 function rariSolidHeadInjector(headHtml: string): SolidStreamTransform {
   let buffer = ''
@@ -169,6 +167,7 @@ function rariSolidLookup(id: string): SolidComponentFn {
 async function renderSolidRouteStreaming(options: SolidRouteOptions): Promise<void> {
   const solidWeb = (await import('solid-js/web')) as unknown as {
     renderToStream: (fn: () => unknown) => { pipe: (w: SolidStreamWritable) => void }
+    renderToStringAsync: (fn: () => unknown) => Promise<string>
     generateHydrationScript: () => string
   }
   const solid = (await import('solid-js')) as unknown as {
@@ -183,13 +182,15 @@ async function renderSolidRouteStreaming(options: SolidRouteOptions): Promise<vo
   const Page = rariSolidLookup(options.pageId)
   let node: () => unknown = () => createComponent(Page, options.props)
 
-  if (options.loadingId != null) {
-    const Loading = rariSolidLookup(options.loadingId)
+  // Resources only resolve (and re-render their readers) inside a Suspense boundary, so every
+  // page gets one; loading.tsx is its streamed fallback when present.
+  {
+    const Loading = options.loadingId != null ? rariSolidLookup(options.loadingId) : null
     const inner = node
     node = () =>
       createComponent(Suspense, {
         get fallback() {
-          return createComponent(Loading, {})
+          return Loading != null ? createComponent(Loading, {}) : undefined
         },
         get children() {
           return inner()
@@ -237,6 +238,21 @@ async function renderSolidRouteStreaming(options: SolidRouteOptions): Promise<vo
     solidWeb.generateHydrationScript() +
     rariSolidMetadataToHtml(options.metadata) +
     options.headContent
+
+  // Without a loading.tsx there is no fallback to stream: resolve every resource first
+  // (async pages must not render empty), then send the finished document in one write.
+  if (options.loadingId == null) {
+    const resolved = await solidWeb.renderToStringAsync(node)
+    await rariSolidPipeToOps(
+      options.streamId,
+      writable => {
+        writable.write(resolved)
+        writable.end()
+      },
+      rariSolidHeadInjector(headHtml),
+    )
+    return
+  }
 
   await rariSolidPipeToOps(
     options.streamId,

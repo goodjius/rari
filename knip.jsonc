@@ -11,12 +11,7 @@
       ]
     },
     "packages/rari": {
-      "entry": [
-        "src/**/*.ts",
-        "src/runtime/**/*.tsx",
-        // Pack entry; consumed via virtual:client-router at runtime, not a direct import.
-        "src/router/navigation/client-router.tsx"
-      ],
+      "entry": ["src/**/*.ts"],
       "project": ["src/**/*.{ts,tsx,js,jsx,mdx}"],
       "ignoreBinaries": [
         "npx.cmd" // Windows-specific npx command used in cross-platform spawn logic
@@ -77,9 +72,6 @@
     },
     "tools/bundle-solid-esm": {
       "ignoreDependencies": ["seroval", "solid-js"] // bundled from node_modules by rolldown
-    },
-    "tools/bundle-react-esm": {
-      "ignoreDependencies": ["react-dom", "react-server-dom-webpack"]
     },
     "test/fixtures/app": {
       "ignore": [

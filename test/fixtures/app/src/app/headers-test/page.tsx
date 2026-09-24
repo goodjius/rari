@@ -1,17 +1,25 @@
 import type { Metadata } from 'rari'
 import { headers } from 'rari/headers'
+import { createResource } from 'solid-js'
 
-export default async function HeadersTestPage() {
+async function loadHeaders() {
   const requestHeaders = await headers()
-  const userAgent = requestHeaders.get('user-agent')
-  const host = requestHeaders.get('host')
+  return {
+    userAgent: requestHeaders.get('user-agent'),
+    host: requestHeaders.get('host'),
+    hasAccept: requestHeaders.has('accept'),
+  }
+}
+
+export default function HeadersTestPage() {
+  const [data] = createResource(loadHeaders)
 
   return (
     <div>
       <h1>headers() Test</h1>
-      <p data-testid="user-agent">{userAgent ?? 'missing'}</p>
-      <p data-testid="host">{host ?? 'missing'}</p>
-      <p data-testid="has-accept">{requestHeaders.has('accept') ? 'yes' : 'no'}</p>
+      <p data-testid="user-agent">{data()?.userAgent ?? 'missing'}</p>
+      <p data-testid="host">{data()?.host ?? 'missing'}</p>
+      <p data-testid="has-accept">{data()?.hasAccept === true ? 'yes' : 'no'}</p>
     </div>
   )
 }

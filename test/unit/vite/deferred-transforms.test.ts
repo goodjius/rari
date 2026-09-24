@@ -1,7 +1,4 @@
-import {
-  buildClientReferenceStubModule,
-  collectExportNames,
-} from '@rari/vite/transform/client-reference-stub'
+import { collectExportNames } from '@rari/vite/analysis/directives'
 import {
   buildGlobalClientComponentWrapper,
   buildGlobalClientNamespaceWrapper,
@@ -43,19 +40,6 @@ export function Real() {}
 
   it('ignores bare export * re-exports', () => {
     expect(collectExportNames(`export * from './mod'\n`)).toEqual([])
-  })
-})
-
-describe('buildClientReferenceStubModule', () => {
-  it('emits named and default registerClientReference exports', () => {
-    const stub = buildClientReferenceStubModule('src/components/ui.tsx', ['default', 'Card'])
-
-    expect(stub).toContain(
-      'export default registerClientReference(null, "src/components/ui.tsx", "default")',
-    )
-    expect(stub).toContain(
-      'export const Card = registerClientReference(null, "src/components/ui.tsx", "Card")',
-    )
   })
 })
 

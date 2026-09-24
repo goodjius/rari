@@ -2,14 +2,7 @@ import path from 'node:path'
 import { normalizeAssetsDir } from '@/shared/utils/path'
 import { isRecord } from '@/shared/utils/type-guards'
 
-const DEFAULT_EXCLUDE_ALIASES = [
-  'react',
-  'react-dom',
-  'react/jsx-runtime',
-  'react/jsx-dev-runtime',
-  'react/compiler-runtime',
-  'react-dom/client',
-] as const
+const DEFAULT_EXCLUDE_ALIASES: readonly string[] = []
 
 export interface ViteAliasConfig {
   readonly resolve?: {

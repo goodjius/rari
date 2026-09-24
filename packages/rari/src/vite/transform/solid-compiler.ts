@@ -36,7 +36,9 @@ export function matchesSolidId(id: string): boolean {
   const cleanId = stripQuery(id)
   if (/\.d\.[cm]?ts$/.test(cleanId)) return false
   if (cleanId.includes('/dist/')) return false
-  return SOLID_JSX_RE.test(cleanId) && !cleanId.includes('/node_modules/')
+  if (!SOLID_JSX_RE.test(cleanId)) return false
+  // rari ships Solid components as source (rari/image), so its own src/ is compiled even under node_modules.
+  return cleanId.includes('/rari/src/') || !cleanId.includes('/node_modules/')
 }
 
 export function solidGenerateModeForConsumer(consumer: 'client' | 'server'): SolidGenerateMode {
@@ -76,7 +78,7 @@ export function createSolidCompilerPlugin(options: SolidCompilerOptions = {}): P
     } catch (error) {
       const cause = asError(error)
       return onError(
-        `The Solid compiler requires the optional \`@babel/core\` (v7) and \`babel-preset-solid\` packages. Install them before using \`rari({ framework: 'solid' })\`.${
+        `The Solid compiler requires \`@babel/core\` (v7) and \`babel-preset-solid\`; reinstall rari to restore them.${
           cause != null ? `\n${cause.message}` : ''
         }`,
       )

@@ -5,12 +5,10 @@ use std::{
     sync::LazyLock,
 };
 
-use deno_core::{ModuleCodeString, ModuleName};
 use regex::Regex;
 use serde::Serialize;
 
 use super::{DEFAULT_IMAGE_QUALITY, ImageVariant};
-use crate::runtime::transpile::maybe_transpile_source;
 
 fn parse_decimal_u32(value: &str) -> Option<u32> {
     value.parse().ok()
@@ -32,7 +30,6 @@ fn compile_alias_regex(pattern: &str) -> Option<Regex> {
 struct AliasPatterns {
     jsx_self_closing: Regex,
     jsx_opening: Regex,
-    create_element: Regex,
 }
 
 #[derive(Default)]
@@ -52,16 +49,8 @@ impl AliasRegexCache {
                 tracing::warn!(alias = %alias, "image scanner: skipping invalid alias regex");
                 return None;
             };
-            let Some(create_element) =
-                compile_alias_regex(&format!(r"React\.createElement\(\s*{alias}\s*,\s*\{{"))
-            else {
-                tracing::warn!(alias = %alias, "image scanner: skipping invalid alias regex");
-                return None;
-            };
-            self.patterns.insert(
-                alias.to_string(),
-                AliasPatterns { jsx_self_closing, jsx_opening, create_element },
-            );
+            self.patterns
+                .insert(alias.to_string(), AliasPatterns { jsx_self_closing, jsx_opening });
         }
         self.patterns.get(alias)
     }
@@ -92,21 +81,6 @@ static PRELOAD_TRUE_PROP_REGEX: LazyLock<Regex> =
 
 static PRELOAD_FALSE_PROP_REGEX: LazyLock<Regex> =
     LazyLock::new(|| init_regex(r"(?:^|\s)preload=\{?false\}?"));
-
-static CREATE_ELEMENT_SRC_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| init_regex(r#"(?:^|[\s,])src:\s*["']([^"']+)["']"#));
-
-static CREATE_ELEMENT_WIDTH_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| init_regex(r"(?:^|[\s,])width:\s*(\d+)"));
-
-static CREATE_ELEMENT_QUALITY_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| init_regex(r"(?:^|[\s,])quality:\s*(\d+)"));
-
-static CREATE_ELEMENT_PRELOAD_TRUE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| init_regex(r"(?:^|[\s,])preload:\s*(true|!0)"));
-
-static CREATE_ELEMENT_PRELOAD_FALSE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| init_regex(r"(?:^|[\s,])preload:\s*(false|!1)"));
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -233,104 +207,6 @@ fn parse_jsx_props(props_string: &str) -> Option<ImageVariant> {
     Some(ImageVariant { src: src.to_string(), width, quality, preload: Some(preload) })
 }
 
-fn parse_create_element_props(props_string: &str) -> Option<ImageVariant> {
-    let src = CREATE_ELEMENT_SRC_REGEX
-        .captures(props_string)
-        .and_then(|captures| captures.get(1))
-        .map(|value| value.as_str())?;
-
-    if !is_valid_src(src) {
-        return None;
-    }
-
-    let (width, quality, preload) = parse_numeric_props(
-        props_string,
-        &CREATE_ELEMENT_WIDTH_REGEX,
-        &CREATE_ELEMENT_QUALITY_REGEX,
-        &CREATE_ELEMENT_PRELOAD_TRUE_REGEX,
-        &CREATE_ELEMENT_PRELOAD_FALSE_REGEX,
-    );
-
-    Some(ImageVariant { src: src.to_string(), width, quality, preload: Some(preload) })
-}
-
-fn extract_balanced_braces(code: &str, start_index: usize) -> Option<String> {
-    let mut brace_count = 0;
-    let mut in_string = false;
-    let mut string_char = '\0';
-    let mut escaped = false;
-    let mut template_depth = 0;
-
-    for (offset, ch) in code[start_index..].char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-
-        if !in_string && (ch == '"' || ch == '\'' || ch == '`') {
-            in_string = true;
-            string_char = ch;
-            if ch == '`' {
-                template_depth = 1;
-            }
-            continue;
-        }
-
-        if in_string && string_char == '`' && ch == '`' {
-            // Inside ${ ... }, a backtick opens or closes a nested template literal.
-            if brace_count > 1 && template_depth < brace_count {
-                template_depth += 1;
-                continue;
-            }
-
-            template_depth -= 1;
-            if template_depth == 0 {
-                in_string = false;
-                string_char = '\0';
-            }
-            continue;
-        }
-
-        if in_string && ch == string_char {
-            in_string = false;
-            string_char = '\0';
-            continue;
-        }
-
-        if in_string && string_char == '`' && ch == '$' {
-            let next_index = start_index + offset + ch.len_utf8();
-            if next_index < code.len() && code.as_bytes()[next_index] == b'{' {
-                brace_count += 1;
-                continue;
-            }
-        }
-
-        if in_string && string_char == '`' && ch == '}' && brace_count > 0 {
-            brace_count -= 1;
-            continue;
-        }
-
-        if !in_string {
-            if ch == '{' {
-                brace_count += 1;
-            } else if ch == '}' {
-                brace_count -= 1;
-                if brace_count == 0 {
-                    let end_index = start_index + offset;
-                    return Some(code[start_index + 1..end_index].to_string());
-                }
-            }
-        }
-    }
-
-    None
-}
-
 fn process_jsx_aliases(
     content: &str,
     aliases: &[String],
@@ -365,40 +241,8 @@ fn process_jsx_aliases(
     }
 }
 
-fn process_create_element_aliases(
-    transformed_code: &str,
-    aliases: &[String],
-    images: &mut HashMap<String, ImageVariant>,
-    alias_cache: &mut AliasRegexCache,
-) {
-    for alias in aliases {
-        if !SAFE_IDENTIFIER_REGEX.is_match(alias) {
-            tracing::warn!(alias = %alias, "image scanner: skipping unsafe identifier");
-            continue;
-        }
-
-        let Some(patterns) = alias_cache.get_or_insert(alias) else {
-            continue;
-        };
-
-        for captures in patterns.create_element.captures_iter(transformed_code) {
-            let Some(full_match) = captures.get(0) else {
-                continue;
-            };
-
-            let brace_start = full_match.end() - 1;
-            if let Some(props_string) = extract_balanced_braces(transformed_code, brace_start)
-                && let Some(usage) = parse_create_element_props(&props_string)
-            {
-                add_image_to_map(usage, images);
-            }
-        }
-    }
-}
-
 fn extract_image_usages(
     content: &str,
-    file_path: &Path,
     images: &mut HashMap<String, ImageVariant>,
     alias_cache: &mut AliasRegexCache,
 ) {
@@ -407,19 +251,7 @@ fn extract_image_usages(
         return;
     }
 
-    let module_name = ModuleName::from(file_path.to_string_lossy().into_owned());
-    let transpiled =
-        maybe_transpile_source(&module_name, ModuleCodeString::from(content.to_string()));
-
-    match transpiled {
-        Ok((transformed_code, _)) => {
-            process_create_element_aliases(&transformed_code, &aliases, images, alias_cache);
-            if transformed_code.as_str() == content {
-                process_jsx_aliases(content, &aliases, images, alias_cache);
-            }
-        }
-        Err(_) => process_jsx_aliases(content, &aliases, images, alias_cache),
-    }
+    process_jsx_aliases(content, &aliases, images, alias_cache);
 }
 
 fn process_file(
@@ -436,7 +268,7 @@ fn process_file(
         }
     };
 
-    extract_image_usages(&content, path, images, alias_cache);
+    extract_image_usages(&content, images, alias_cache);
 }
 
 fn scan_directory(
@@ -535,47 +367,11 @@ mod tests {
     }
 
     #[test]
-    fn extract_balanced_braces_handles_simple_template_interpolation() {
-        let code = "React.createElement(Image, { src: `/photo-${id}.jpg`, width: 800 })";
-        let brace_start = code.find("{ src").expect("props object");
-        let props = extract_balanced_braces(code, brace_start).expect("extract props");
-        assert!(props.contains("`/photo-${id}.jpg`"));
-        assert!(props.contains("width: 800"));
-    }
-
-    #[test]
-    fn extract_balanced_braces_handles_nested_template_literals() {
-        let code = "React.createElement(Image, { src: `prefix${`nested`}suffix`, width: 800 })";
-        let brace_start = code.find("{ src").expect("props object");
-        let props = extract_balanced_braces(code, brace_start).expect("extract props");
-        assert!(props.contains("`prefix${`nested`}suffix`"));
-        assert!(props.contains("width: 800"));
-    }
-
-    #[test]
-    fn parse_create_element_props_static_src() {
-        let usage = parse_create_element_props(r#"src: "/hero.jpg", width: 800, quality: 90"#)
-            .expect("parse props");
-        assert_eq!(usage.src, "/hero.jpg");
-        assert_eq!(usage.width, Some(800));
-        assert_eq!(usage.quality, Some(90));
-    }
-
-    #[test]
     fn parse_jsx_props_ignores_similar_prop_names() {
         assert!(
             parse_jsx_props(r#"data-src="/fake.jpg" maxWidth={800} preloadPriority"#).is_none()
         );
         let usage = parse_jsx_props(r#" src="/real.jpg" width={800} "#).expect("parse props");
-        assert_eq!(usage.src, "/real.jpg");
-        assert_eq!(usage.width, Some(800));
-    }
-
-    #[test]
-    fn parse_create_element_props_ignores_similar_prop_names() {
-        assert!(parse_create_element_props(r#"dataSrc: "/fake.jpg", maxWidth: 800"#).is_none());
-        let usage =
-            parse_create_element_props(r#" src: "/real.jpg", width: 800 "#).expect("parse props");
         assert_eq!(usage.src, "/real.jpg");
         assert_eq!(usage.width, Some(800));
     }

@@ -17,10 +17,10 @@
  * eventually loads it.
  */
 import type { Component } from 'solid-js'
-import { deserialize } from 'seroval'
 import { createComponent } from 'solid-js'
 import { hydrate } from 'solid-js/web'
 import { isFunction, isRecord } from '../shared/utils/type-guards'
+import { decodeSeroval } from './seroval-json'
 
 export interface SolidIslandRow {
   readonly moduleId: string
@@ -83,7 +83,7 @@ export async function hydrateSolidIsland(row: Readonly<SolidIslandRow>): Promise
   if (!isFunction(component))
     throw new Error(`[rari] Solid island export not found: ${row.moduleId}#${row.exportName}`)
 
-  const props = asPropsRecord(row.props !== '' ? deserialize(row.props) : {})
+  const props = asPropsRecord(row.props !== '' ? decodeSeroval(row.props) : {})
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion - component shape is dynamic (loaded by module id)
   const typedComponent = component as Component<Record<string, unknown>>
@@ -96,6 +96,7 @@ declare global {
   interface Window {
     __RARI_SOLID_ISLANDS__?: readonly string[]
     __RARI_SOLID_ISLAND_LOADERS__?: Readonly<Record<string, () => Promise<unknown>>>
+    __rari_client_ready?: boolean
   }
 }
 
@@ -107,7 +108,7 @@ declare global {
  */
 export function hydrateAllSolidIslands(): void {
   const existing = window.__RARI_SOLID_ISLANDS__ ?? []
-  for (const rowText of existing) void hydrateSolidIsland(decodeSolidIslandRow(rowText))
+  const initial = existing.map(async rowText => hydrateSolidIsland(decodeSolidIslandRow(rowText)))
 
   const rows: string[] = []
   const hydrateRows = (incoming: readonly string[]): number => {
@@ -116,4 +117,12 @@ export function hydrateAllSolidIslands(): void {
     return Array.prototype.push.apply(rows, [...incoming])
   }
   window.__RARI_SOLID_ISLANDS__ = Object.assign(rows, { push: hydrateRows })
+  // Flag for tooling (e2e): every island present at load has finished hydrating.
+  void Promise.allSettled(initial).then(results => {
+    for (const result of results) {
+      if (result.status === 'rejected')
+        console.error('[rari] island hydration failed:', result.reason)
+    }
+    window.__rari_client_ready = true
+  })
 }

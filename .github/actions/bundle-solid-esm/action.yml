@@ -1,0 +1,17 @@
+name: Bundle Solid ESM
+description: Generate Solid vendor files required by the rari crate
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-pnpm
+      with:
+        node-version: 24.21.0
+        cache: 'false'
+        setup-toolchain: 'false'
+
+    - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+    - name: Bundle Solid ESM vendor files
+      shell: bash
+      run: just bundle-solid-esm

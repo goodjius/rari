@@ -17,23 +17,7 @@ pub const DEFAULT_MAX_CACHE_SIZE: usize = 1000;
 
 pub const V8_CACHE_CLEAR_SCRIPT: &str = include_str!("js/v8_cache_clear.ts");
 
-pub const ACTION_FLIGHT_ENCODE_SCRIPT: &str = concat!(
-    include_str!("js/action_flight_shared.ts"),
-    include_str!("js/action_flight_encode.ts"),
-);
-pub const ACTION_HANDLER_SCRIPT: &str = concat!(
-    "// rari-action-handler-v3\n",
-    include_str!("js/action_fn_resolver.ts"),
-    include_str!("js/action_args_validation.core.ts"),
-    include_str!("js/action_args_validation_v8.ts"),
-    include_str!("js/action_flight_shared.ts"),
-    include_str!("js/action_handler.ts"),
-);
-
-// Solid PoC action handler: reuses action_fn_resolver.ts and
-// action_args_validation.*.ts unchanged (confirmed framework-agnostic),
-// swaps the Flight-specific decode/encode for solid_action_handler.ts's
-// seroval-based one. See crates/rari/src/rendering/base/js/solid_action_handler.ts.
+// Server action handler: seroval decode/encode over the shared resolver and arg validator.
 pub const SOLID_ACTION_HANDLER_SCRIPT: &str = concat!(
     include_str!("js/action_fn_resolver.ts"),
     include_str!("js/action_args_validation.core.ts"),
@@ -44,28 +28,8 @@ pub const SOLID_ACTION_HANDLER_SCRIPT: &str = concat!(
 pub const SOLID_ACTIONS_READY_CHECK: &str =
     "typeof globalThis.dispatchSolidServerAction === 'function'";
 
-pub const GET_RSC_BINARY_B64: &str = r"(function() {
-    const bin = globalThis['~rari']?.lastRscBinary;
-    if (!bin || bin.length === 0) return null;
-    let str = '';
-    for (let i = 0; i < bin.length; i++) {
-        str += String.fromCharCode(bin[i]);
-    }
-    return btoa(str);
-})()";
-
-pub const FIZZ_RENDER_SCRIPT: &str = include_str!("../layout/js/fizz_render.ts");
-pub const STREAMING_FIZZ_SCRIPT: &str = concat!(
-    include_str!("../layout/js/html_boundaries.ts"),
-    "\n",
-    include_str!("../layout/js/streaming_fizz.ts"),
-);
-pub const RSC_RENDERER_SCRIPT: &str = include_str!("js/rsc_renderer.ts");
-
-// Solid PoC scripts (first-slice migration spike - see
-// crates/rari/src/runtime/module_loader/solid_vendor.rs). Loaded lazily via
-// RscRenderer::ensure_solid_pipeline, never from RscRenderer::initialize, so
-// existing React routes never load or pay for these.
+// Solid render scripts, loaded by RscRenderer::ensure_solid_pipeline (vendored Solid: see
+// crates/rari/src/runtime/module_loader/solid_vendor.rs).
 pub const SOLID_RSC_RENDERER_SCRIPT: &str = include_str!("js/solid_rsc_renderer.ts");
 pub const SOLID_STREAMING_SCRIPT: &str = include_str!("../layout/js/solid_streaming.ts");
 pub const SOLID_COMPONENT_LOADER_SCRIPT: &str = include_str!("js/solid_component_loader.ts");
@@ -80,25 +44,6 @@ pub const SOLID_PIPELINE_READY_CHECK: &str = "typeof globalThis.renderSolidToHtm
         && typeof globalThis.renderSolidIsland === 'function' \
         && typeof globalThis.renderSolidRouteStreaming === 'function' \
         && typeof globalThis.resetSolidIslandState === 'function'";
-
-pub const STREAMING_PIPELINE_READY_CHECK: &str = "typeof globalThis['~rari']?.renderStreamingDocument === 'function' \
-        && typeof globalThis['~rari']?.renderStaticDocument === 'function'";
-
-pub const LOAD_FULL_REACT_VENDORS_SCRIPT: &str = r"
-(function() {
-    if (typeof globalThis['~rari']?.loadFullReactVendors === 'function')
-        return globalThis['~rari'].loadFullReactVendors();
-    return false;
-})()
-";
-
-pub const LOAD_RSC_VENDORS_SCRIPT: &str = r"
-(function() {
-    if (typeof globalThis['~rari']?.loadRscReactVendors === 'function')
-        return globalThis['~rari'].loadRscReactVendors();
-    return false;
-})()
-";
 
 pub const EXTENSION_CHECKS: &str = r"(function () {
   const checks = {};

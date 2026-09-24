@@ -29,12 +29,12 @@ async function dispatchSolidServerAction(
   actionId: string,
   argsExpr: string,
 ): Promise<SolidActionOutcome> {
-  const { serialize, deserialize } = (await import('seroval')) as {
-    serialize: (value: unknown) => string
-    deserialize: (value: string) => unknown
+  const { toJSON, fromJSON } = (await import('seroval')) as {
+    toJSON: (value: unknown) => unknown
+    fromJSON: (value: unknown) => unknown
   }
 
-  const decoded = argsExpr !== '' ? deserialize(argsExpr) : []
+  const decoded = argsExpr !== '' ? fromJSON(JSON.parse(argsExpr)) : []
   const args = Array.isArray(decoded) ? decoded : [decoded]
   const sanitizedArgs = validateActionArgs(args)
 
@@ -51,7 +51,7 @@ async function dispatchSolidServerAction(
     }
   }
 
-  return { body: serialize({ v: result }), redirect }
+  return { body: JSON.stringify(toJSON({ v: result })), redirect }
 }
 
 g.dispatchSolidServerAction = dispatchSolidServerAction

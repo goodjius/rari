@@ -11,7 +11,7 @@ function isActionPostResponse(
 ) {
   return (
     response.request().method() === 'POST' &&
-    (response.headers()['content-type']?.includes('text/x-component') ||
+    (response.headers()['content-type']?.includes('application/x-rari-seroval') ||
       response.url().includes('/_rari/action'))
   )
 }

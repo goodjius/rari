@@ -4,17 +4,6 @@ use regex::Regex;
 
 #[expect(clippy::too_many_lines)]
 pub fn transform_imports_for_hmr(source: &str) -> String {
-    let Ok(react_named_imports_regex) =
-        Regex::new(r"import\s+React,?\s*\{\s*([^}]+)\s*\}\s+from\s+['\x22]react['\x22]")
-    else {
-        return source.to_string();
-    };
-
-    let Ok(react_default_import_regex) = Regex::new(r"import\s+React\s+from\s+['\x22]react['\x22]")
-    else {
-        return source.to_string();
-    };
-
     let Ok(named_imports_regex) =
         Regex::new(r"import\s+\{\s*([^}]+)\s*\}\s+from\s+['\x22]([^'\x22]+)['\x22]")
     else {
@@ -32,48 +21,7 @@ pub fn transform_imports_for_hmr(source: &str) -> String {
     for line in lines {
         let trimmed = line.trim();
 
-        if trimmed.starts_with("import") && trimmed.contains("from 'react'") {
-            if let Some(captures) = react_named_imports_regex.captures(trimmed)
-                && let Some(named_imports_match) = captures.get(1)
-            {
-                let named_imports = named_imports_match.as_str();
-                let imports: Vec<&str> = named_imports.split(',').map(str::trim).collect();
-
-                result.push_str(
-                    "if (typeof React === 'undefined') { var React = globalThis.React; }\n",
-                );
-
-                for import in imports {
-                    let import_name = import.trim();
-                    if !import_name.is_empty() {
-                        if import_name.contains(" as ") {
-                            let parts: Vec<&str> = import_name.split(" as ").collect();
-                            if parts.len() == 2 {
-                                let original_name = parts[0].trim();
-                                let alias_name = parts[1].trim();
-                                let _ = writeln!(
-                                    result,
-                                    "if (typeof {alias_name} === 'undefined') {{ var {alias_name} = globalThis.React?.{original_name} || globalThis.{alias_name} || (function(props) {{ return props?.children || null; }}); }}"
-                                );
-                            }
-                        } else {
-                            let _ = writeln!(
-                                result,
-                                "if (typeof {import_name} === 'undefined') {{ var {import_name} = globalThis.React?.{import_name} || globalThis.{import_name} || (function(props) {{ return props?.children || null; }}); }}"
-                            );
-                        }
-                    }
-                }
-                continue;
-            }
-
-            if react_default_import_regex.is_match(trimmed) {
-                result.push_str(
-                    "if (typeof React === 'undefined') { var React = globalThis.React; }\n",
-                );
-                continue;
-            }
-        } else if trimmed.starts_with("import") && !trimmed.contains("from 'react'") {
+        if trimmed.starts_with("import") {
             if let Some(captures) = named_imports_regex.captures(trimmed)
                 && let Some(named_imports_match) = captures.get(1)
             {

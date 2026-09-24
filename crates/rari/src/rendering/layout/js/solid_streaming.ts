@@ -12,7 +12,7 @@
  * `typeof === 'function'`), so it works unchanged for a Solid component.
  *
  * `propsExpr`, when given, is a seroval-serialized expression string (see
- * solid_props_codec.ts) - deserialized here via `seroval.deserialize`
+ * solid_props_codec.ts) - deserialized here via `seroval.fromJSON`
  * rather than spliced as literal script text, so untrusted prop *values*
  * never need to be safely embedded as executable code on this path (the
  * hydration-payload embed in solid_islands.ts is the one place a seroval
@@ -26,15 +26,15 @@ async function renderSolidToHtml(componentId: string, propsExpr?: string): Promi
   const { createComponent } = (await import('solid-js')) as {
     createComponent: (comp: (props: unknown) => unknown, props: unknown) => unknown
   }
-  const { deserialize } = (await import('seroval')) as {
-    deserialize: (value: string) => unknown
+  const { fromJSON } = (await import('seroval')) as {
+    fromJSON: (value: unknown) => unknown
   }
 
   const component = (g as Record<string, unknown>)[componentId]
   if (typeof component !== 'function')
     throw new Error(`[rari] Solid component not loaded: ${componentId}`)
 
-  const props = propsExpr != null && propsExpr !== '' ? deserialize(propsExpr) : {}
+  const props = propsExpr != null && propsExpr !== '' ? fromJSON(JSON.parse(propsExpr)) : {}
 
   return solidWeb.renderToString(() => createComponent(component as (p: unknown) => unknown, props))
 }
@@ -58,11 +58,11 @@ interface SolidStreamTransform {
 
 /**
  * Adapts `solid-js/web`'s `renderToStream(...).pipe({write, end})` callback
- * interface onto the generic `op_fizz_chunk*` ops
+ * interface onto the generic `op_stream_chunk*` ops
  * (`crates/rari/src/runtime/ops.rs`: raw byte passthrough, zero HTML
  * assumptions, no changes needed).
  *
- * `write` is called synchronously by Solid, but `op_fizz_chunk`'s
+ * `write` is called synchronously by Solid, but `op_stream_chunk`'s
  * backpressure fallback is async - so this can't just forward each write
  * directly to an op call. Instead it's a local queue drained by an async
  * pump, with explicit completion tracking via `end()` (which `renderToStream`
@@ -88,7 +88,7 @@ async function rariSolidPipeToOps(
         try {
           while (queue.length > 0) {
             const chunk = queue.shift() as string
-            const status = Deno.core.ops.op_fizz_chunk_try(streamId, chunk)
+            const status = Deno.core.ops.op_stream_chunk_try(streamId, chunk)
             if (status === 0) continue // sent
             if (status === 2) {
               // receiver disconnected - drop the rest, nothing more to send
@@ -96,7 +96,7 @@ async function rariSolidPipeToOps(
               break
             }
             // status === 1: channel full, fall back to the async/backpressure op
-            await Deno.core.ops.op_fizz_chunk(streamId, chunk)
+            await Deno.core.ops.op_stream_chunk(streamId, chunk)
           }
         } finally {
           pumping = false
@@ -107,7 +107,7 @@ async function rariSolidPipeToOps(
       // whichever call is the last to actually finish the drain is the one
       // that finalizes - never missed, never double-fired incorrectly.
       if (ended && queue.length === 0 && !pumping) {
-        Deno.core.ops.op_fizz_done(streamId)
+        Deno.core.ops.op_stream_done(streamId)
         resolve()
       }
     }
@@ -146,15 +146,15 @@ async function renderSolidToHtmlStreaming(
   const { createComponent } = (await import('solid-js')) as {
     createComponent: (comp: (props: unknown) => unknown, props: unknown) => unknown
   }
-  const { deserialize } = (await import('seroval')) as {
-    deserialize: (value: string) => unknown
+  const { fromJSON } = (await import('seroval')) as {
+    fromJSON: (value: unknown) => unknown
   }
 
   const component = (g as Record<string, unknown>)[componentId]
   if (typeof component !== 'function')
     throw new Error(`[rari] Solid component not loaded: ${componentId}`)
 
-  const props = propsExpr != null && propsExpr !== '' ? deserialize(propsExpr) : {}
+  const props = propsExpr != null && propsExpr !== '' ? fromJSON(JSON.parse(propsExpr)) : {}
 
   await rariSolidPipeToOps(streamId, writable => {
     solidWeb

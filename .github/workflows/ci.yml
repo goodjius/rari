@@ -70,12 +70,12 @@ jobs:
               - 'rust-toolchain.toml'
               - '.clippy.toml'
               - '.rustfmt.toml'
-              - 'tools/bundle-react-esm/**'
+              - 'tools/bundle-solid-esm/**'
               - 'pnpm-lock.yaml'
             snapshot:
               - 'crates/rari/src/runtime/ext/**'
               - 'tools/snapshot/**'
-              - 'tools/bundle-react-esm/**'
+              - 'tools/bundle-solid-esm/**'
               - 'pnpm-lock.yaml'
             use_cache_crate:
               - '.github/workflows/ci.yml'
@@ -114,8 +114,8 @@ jobs:
 
       - uses: ./.github/actions/setup-rust-build-deps
 
-      - name: Bundle React ESM vendor files
-        uses: ./.github/actions/bundle-react-esm
+      - name: Bundle Solid ESM vendor files
+        uses: ./.github/actions/bundle-solid-esm
 
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
@@ -170,8 +170,8 @@ jobs:
 
       - uses: ./.github/actions/setup-rust-build-deps
 
-      - name: Bundle React ESM vendor files
-        uses: ./.github/actions/bundle-react-esm
+      - name: Bundle Solid ESM vendor files
+        uses: ./.github/actions/bundle-solid-esm
 
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
@@ -239,8 +239,8 @@ jobs:
         with:
           vcpkg-triplet: x64-windows
 
-      - name: Bundle React ESM vendor files
-        uses: ./.github/actions/bundle-react-esm
+      - name: Bundle Solid ESM vendor files
+        uses: ./.github/actions/bundle-solid-esm
 
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
@@ -493,8 +493,8 @@ jobs:
         with:
           platform: linux-x64
 
-      - name: Bundle React ESM vendor files
-        run: just bundle-react-esm
+      - name: Bundle Solid ESM vendor files
+        run: just bundle-solid-esm
 
       - name: Lint and test
         run: just ci-lint-test

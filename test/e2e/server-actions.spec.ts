@@ -7,7 +7,7 @@ test.describe.serial('Server Actions', () => {
     await resetActionsFixture(page)
   })
 
-  test.describe('useActionState Hook', () => {
+  test.describe('form submission', () => {
     test('should add todo using form action', async ({ page }) => {
       await page.fill('[data-testid="todo-input"]', 'New test todo')
       await submitAndWaitForAction(page, '[data-testid="submit-button"]')
@@ -34,7 +34,7 @@ test.describe.serial('Server Actions', () => {
     })
   })
 
-  test.describe('useTransition Hook', () => {
+  test.describe('list actions', () => {
     test('should toggle todo completion status', async ({ page }) => {
       await expect(page.locator('[data-testid="todo-status-1"]')).toHaveText('completed')
       await submitAndWaitForAction(page, '[data-testid="toggle-button-1"]')

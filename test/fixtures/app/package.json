@@ -9,17 +9,15 @@
     "typecheck": "tsc"
   },
   "dependencies": {
-    "@rari/use-cache": "workspace:*",
-    "@stylexjs/stylex": "catalog:stylex",
     "rari": "workspace:*",
-    "react": "catalog:react",
-    "react-dom": "catalog:react"
+    "seroval": "catalog:solid",
+    "solid-js": "catalog:solid"
   },
   "devDependencies": {
-    "@stylexjs/unplugin": "catalog:stylex",
+    "@babel/core": "catalog:solid",
     "@tailwindcss/vite": "catalog:tailwind",
-    "@types/react": "catalog:react",
-    "@types/react-dom": "catalog:react",
+    "babel-preset-solid": "catalog:solid",
+    "solid-refresh": "catalog:solid",
     "tailwindcss": "catalog:tailwind",
     "typescript-7": "catalog:typescript",
     "vite": "catalog:build"

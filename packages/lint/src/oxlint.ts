@@ -1,5 +1,4 @@
 import type { OxlintConfig } from 'vite-plus/lint'
-import { reactOnlyRules, solidGlobs } from './globs'
 import { ignorePatterns } from './ignores'
 
 export const lint: OxlintConfig = {
@@ -700,44 +699,6 @@ export const lint: OxlintConfig = {
       plugins: ['vitest', 'typescript'],
     },
     {
-      files: ['**/*.{ts,tsx}'],
-      rules: {
-        'react/exhaustive-deps': 'warn',
-        'react/jsx-key': 'error',
-        'react/jsx-no-comment-textnodes': 'warn',
-        'react/jsx-no-duplicate-props': 'error',
-        'react/jsx-no-undef': 'error',
-        'react/no-array-index-key': 'warn',
-        'react/no-children-prop': 'error',
-        'react/no-clone-element': 'warn',
-        'react/no-danger-with-children': 'error',
-        'react/no-direct-mutation-state': 'error',
-        'react/no-unstable-nested-components': 'error',
-        'react/error-boundaries': 'error',
-        'react/globals': 'error',
-        'react/immutability': 'error',
-        'react/incompatible-library': 'error',
-        'react/preserve-manual-memoization': 'error',
-        'react/purity': 'error',
-        'react/refs': 'error',
-        'react/set-state-in-effect': 'error',
-        'react/set-state-in-render': 'error',
-        'react/static-components': 'error',
-        'react/use-memo': 'error',
-        'react/unsupported-syntax': 'error',
-        'react/rules-of-hooks': 'error',
-        'react/void-dom-elements-no-children': 'error',
-        'react/only-export-components': [
-          'error',
-          {
-            allowConstantExport: false,
-            allowExportNames: [],
-          },
-        ],
-      },
-      plugins: ['react'],
-    },
-    {
       files: ['**/*.{tsx}'],
       rules: {
         'jsx-a11y/alt-text': 'error',
@@ -828,18 +789,6 @@ export const lint: OxlintConfig = {
         'unused-imports/no-unused-vars': 'off',
         'no-unused-vars': 'off',
       },
-    },
-    {
-      files: ['**/src/app/**'],
-      rules: {
-        'react/only-export-components': 'off',
-      },
-      plugins: ['react'],
-    },
-    {
-      files: solidGlobs,
-      rules: Object.fromEntries(reactOnlyRules.map(name => [`react/${name}`, 'off'] as const)),
-      plugins: ['react'],
     },
   ],
   options: {

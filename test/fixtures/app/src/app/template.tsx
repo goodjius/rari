@@ -1,6 +1,9 @@
-import type { ReactNode } from 'react'
-import { RootTemplateClient } from './template-client'
+import type { JSX } from 'solid-js'
 
-export default function RootTemplate({ children }: Readonly<{ children: ReactNode }>) {
-  return <RootTemplateClient>{children}</RootTemplateClient>
+export default function RootTemplate(props: { readonly children: JSX.Element }) {
+  return (
+    <div data-testid="root-template">
+      <div data-testid="root-template-children">{props.children}</div>
+    </div>
+  )
 }

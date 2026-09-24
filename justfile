@@ -30,7 +30,7 @@ check-prerequisites:
 # --- Build commands ---
 
 # Build everything (Rust + all Node.js packages)
-build: bundle-react-esm build-snapshot build-rust build-node
+build: bundle-solid-esm build-snapshot build-rust build-node
 
 # Generate V8 startup snapshot (required before building rari)
 # Rebuilds when snapshot is missing, empty, or stale (older than Cargo.toml or extension sources)
@@ -273,10 +273,6 @@ prepare-binaries:
 prepare-binaries-dev:
     cargo run --manifest-path tools/prepare-binaries/Cargo.toml -- --dev
 
-# Bundle React CJS into ESM for rari's V8 runtime (emits .js into the rari crate)
-bundle-react-esm: _ensure-node-deps
-    pnpm --filter @rari/bundle-react-esm bundle
-
 # Build the JSX-authored Solid fixture app (rari + workspace deps built first; consumed by Rust real-V8 tests)
 build-solid-fixture: _ensure-node-deps
     cd packages/logger && pnpm exec vp pack
@@ -284,7 +280,7 @@ build-solid-fixture: _ensure-node-deps
     cd packages/rari && pnpm exec vp pack
     -pnpm --filter @test/solid-app build
 
-# Bundle Solid into ESM for rari's V8 runtime (Solid PoC, emits .js into the rari crate)
+# Bundle Solid into ESM for rari's V8 runtime (emits .js into the rari crate)
 bundle-solid-esm: _ensure-node-deps
     pnpm --filter @rari/bundle-solid-esm bundle
 

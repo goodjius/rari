@@ -18,7 +18,7 @@ use crate::{
     rendering::{
         base::run_with_renderer_result,
         layout::{
-            types::{ChunkedContentType, LayoutRenderContext, PageMetadata, RenderResult},
+            types::{LayoutRenderContext, PageMetadata, RenderResult},
             utils,
         },
     },
@@ -145,7 +145,6 @@ impl LayoutRenderer {
                     .send(Err(RariError::internal(format!("Solid streaming setup failed: {e}"))))
                     .await;
                 return Ok(RenderResult::Chunked {
-                    content_type: ChunkedContentType::Html,
                     shell,
                     closing: Bytes::new(),
                     chunks: chunk_receiver,
@@ -167,11 +166,11 @@ impl LayoutRenderer {
                 }} catch (error) {{
                     console.error('[rari] Solid route render failed:', error);
                     const message = String((error && error.message) || error).split('<').join('&lt;');
-                    await Deno.core.ops.op_fizz_chunk(
+                    await Deno.core.ops.op_stream_chunk(
                         __RARI_STREAM_ID__,
                         '<html><head></head><body><div class=rari-error style=color:red>Error loading content: ' + message + '</div></body></html>',
                     );
-                    Deno.core.ops.op_fizz_done(__RARI_STREAM_ID__);
+                    Deno.core.ops.op_stream_done(__RARI_STREAM_ID__);
                 }}
             }})()"
         );
@@ -197,11 +196,6 @@ impl LayoutRenderer {
             Err(e) => tracing::error!("Solid route streaming queue error: {e}"),
         }
 
-        Ok(RenderResult::Chunked {
-            content_type: ChunkedContentType::Html,
-            shell,
-            closing: Bytes::new(),
-            chunks: chunk_receiver,
-        })
+        Ok(RenderResult::Chunked { shell, closing: Bytes::new(), chunks: chunk_receiver })
     }
 }

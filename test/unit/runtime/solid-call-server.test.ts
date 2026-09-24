@@ -1,9 +1,9 @@
 import { callServerSolid, createServerReference } from '@rari/runtime/actions/solid-call-server'
-import { deserialize, serialize } from 'seroval'
+import { fromJSON, toJSON } from 'seroval'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
 function seroval(value: unknown, init: ResponseInit = {}): Response {
-  return new Response(serialize({ v: value }), {
+  return new Response(JSON.stringify(toJSON({ v: value })), {
     status: 200,
     headers: { 'content-type': 'application/x-rari-seroval' },
     ...init,
@@ -34,7 +34,10 @@ describe('callServerSolid', () => {
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/actions?a=1')
     expect(init?.headers).toMatchObject({ 'rsc-action-id': 'mod#greet' })
-    expect(deserialize(typeof init?.body === 'string' ? init.body : '')).toEqual(['World', 2])
+    expect(fromJSON(JSON.parse(typeof init?.body === 'string' ? init.body : 'null'))).toEqual([
+      'World',
+      2,
+    ])
     expect(result).toEqual({ when: new Date(0) })
   })
 

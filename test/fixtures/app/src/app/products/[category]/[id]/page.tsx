@@ -1,7 +1,8 @@
 import type { Metadata, PageProps } from 'rari'
 
-export default function ProductPage({ params }: PageProps) {
-  const { category, id } = params
+export default function ProductPage(props: PageProps) {
+  const category = String(props.params.category)
+  const id = String(props.params.id)
 
   return (
     <div>

@@ -1,6 +1,34 @@
-import type { ReactNode } from 'react'
-import { Suspense } from 'react'
+import type { JSX } from 'solid-js'
+import { createResource, Suspense } from 'solid-js'
 import { isoTimestamp, sleep } from '../../utils/test-helpers'
+
+function OuterComponent(props: { readonly delay: number; readonly children: JSX.Element }) {
+  const [stamp] = createResource(async () => {
+    await sleep(props.delay)
+    return isoTimestamp()
+  })
+
+  return (
+    <div data-testid="outer-content">
+      <div>Outer content</div>
+      <div data-testid="outer-timestamp">{stamp()}</div>
+      {props.children}
+    </div>
+  )
+}
+
+function InnerComponent(props: { readonly delay: number; readonly name: string }) {
+  const [stamp] = createResource(async () => {
+    await sleep(props.delay)
+    return isoTimestamp()
+  })
+
+  return (
+    <div data-testid={`component-${props.name.toLowerCase()}`}>
+      {props.name}:{stamp()}
+    </div>
+  )
+}
 
 export default function NestedSuspensePage() {
   return (
@@ -13,36 +41,6 @@ export default function NestedSuspensePage() {
           </Suspense>
         </OuterComponent>
       </Suspense>
-    </div>
-  )
-}
-
-interface OuterProps {
-  readonly delay: number
-  readonly children: ReactNode
-}
-
-async function OuterComponent({ delay, children }: OuterProps) {
-  await sleep(delay)
-  return (
-    <div data-testid="outer-content">
-      <div>Outer content</div>
-      <div data-testid="outer-timestamp">{isoTimestamp()}</div>
-      {children}
-    </div>
-  )
-}
-
-interface InnerProps {
-  readonly delay: number
-  readonly name: string
-}
-
-async function InnerComponent({ delay, name }: InnerProps) {
-  await sleep(delay)
-  return (
-    <div data-testid={`component-${name.toLowerCase()}`}>
-      {name}:{isoTimestamp()}
     </div>
   )
 }

@@ -15,8 +15,8 @@
  * directly into a render script (`const props = <expr>;`), not JSON.parse'd.
  */
 async function encodeSolidProps(props: unknown): Promise<string> {
-  const { serialize } = (await import('seroval')) as { serialize: (value: unknown) => string }
-  return serialize(props)
+  const { toJSON } = (await import('seroval')) as { toJSON: (value: unknown) => unknown }
+  return JSON.stringify(toJSON(props))
 }
 
 g.encodeSolidProps = encodeSolidProps

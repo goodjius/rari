@@ -138,29 +138,18 @@ function importedCssFileNames(importedCss: unknown): string[] {
 
 const RSC_EXTERNALS = [
   NODE_PROTOCOL_REGEX,
-  'react',
-  'react-dom',
-  'react/jsx-runtime',
-  'react/jsx-dev-runtime',
-  'react/compiler-runtime',
-  /^rari(?:\/|$)/,
-  'react-server-dom-rari/server',
-  // Solid apps: the Rust runtime resolves these bare specifiers to its vendored
-  // bundles (crates/rari/src/runtime/module_loader/solid_vendor.rs).
+  // rari/image is Solid source (see rari/package.json exports), so it is bundled and compiled with the app.
+  /^rari(?:\/(?!image(?:\/|$))|$)/,
+  // The Rust runtime resolves these bare specifiers to its vendored bundles
+  // (crates/rari/src/runtime/module_loader/solid_vendor.rs).
   /^solid-js(?:\/|$)/,
   'seroval',
 ] as const
 
 const SSR_EXTERNALS = [
   NODE_PROTOCOL_REGEX,
-  'react',
-  'react-dom',
-  'react/jsx-runtime',
-  'react/jsx-dev-runtime',
-  'react/compiler-runtime',
-  /^rari(?:\/|$)/,
-  'react-server-dom-webpack/client',
-  /^react-server-dom-webpack\//,
+  // rari/image is Solid source (see rari/package.json exports), so it is bundled and compiled with the app.
+  /^rari(?:\/(?!image(?:\/|$))|$)/,
   /^solid-js(?:\/|$)/,
   'seroval',
 ] as const

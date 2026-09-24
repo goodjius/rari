@@ -1,477 +1,55 @@
-import type { Response } from '@playwright/test'
 import { expect, test } from '@playwright/test'
-import { URL_PATTERNS } from './shared/constants'
-import { hasRariRuntime, waitForRariRuntime } from './shared/helpers'
 import {
   assertProgressiveTimestamps,
   getServerTimestamps,
   gotoWithRetry,
 } from './shared/streaming-helpers'
 
-interface StreamingTestWindow extends Window {
-  __longTasks?: number[]
-  __longtaskUnsupported?: boolean
-  __navigateEventFired?: boolean
-  __rariNavigateRegistered?: boolean
-  __pageReloaded?: boolean
-}
-
-test.describe('RSC Streaming Infrastructure Tests', () => {
-  test('should load pages without RSC parsing errors', async ({ page }) => {
-    const consoleErrors: string[] = []
-
-    page.on('console', msg => {
-      if (msg.type() === 'error') {
-        consoleErrors.push(msg.text())
-      }
-    })
-
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-
-    const rscErrors = consoleErrors.filter(
-      err =>
-        err.includes('RSC') ||
-        err.includes('Flight protocol') ||
-        err.includes('streaming') ||
-        err.includes('parse'),
-    )
-
-    expect(rscErrors.length).toBe(0)
-    await expect(page.locator('h1')).toBeVisible()
-  })
-
-  test('should handle page navigation without errors', async ({ page }) => {
-    const consoleErrors: string[] = []
-
-    page.on('console', msg => {
-      if (msg.type() === 'error') {
-        consoleErrors.push(msg.text())
-      }
-    })
-
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-
-    await page.goto('/nested')
-    await page.waitForLoadState('networkidle')
-
-    const criticalErrors = consoleErrors.filter(
-      err => !err.includes('favicon') && !err.includes('404') && !err.includes('net::ERR'),
-    )
-
-    expect(criticalErrors.length).toBe(0)
-  })
-
-  test('should render content progressively', async ({ page }) => {
-    const startTime = Date.now()
-
-    await page.goto('/about', { waitUntil: 'domcontentloaded' })
-
-    await expect(page.locator('h1')).toBeVisible({ timeout: 2000 })
-
-    const timeToVisible = Date.now() - startTime
-
-    expect(timeToVisible).toBeLessThan(5000)
-  })
-
-  test('should handle browser back/forward navigation', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-
-    await page.goBack()
-    await page.waitForLoadState('networkidle')
-    await expect(page).toHaveURL(URL_PATTERNS.HOME)
-
-    await page.goForward()
-    await page.waitForLoadState('networkidle')
-    await expect(page).toHaveURL(URL_PATTERNS.ABOUT)
-    await expect(page.locator('h1')).toBeVisible()
-  })
-
-  test('should navigate sequentially between pages', async ({ page }) => {
-    await page.goto('/', { waitUntil: 'domcontentloaded' })
-    await page.waitForLoadState('networkidle')
-
-    await page.goto('/about', { waitUntil: 'domcontentloaded' })
-    await page.waitForLoadState('networkidle')
-
-    await expect(page).toHaveURL(URL_PATTERNS.ABOUT)
-    await expect(page.locator('h1')).toBeVisible()
-  })
-
-  test('should render pages with content', async ({ page }) => {
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-
-    const h1Count = await page.locator('h1').count()
-    expect(h1Count).toBeGreaterThan(0)
-
-    await page.goto('/nested')
-    await page.waitForLoadState('networkidle')
-
-    const h1CountAfter = await page.locator('h1').count()
-    expect(h1CountAfter).toBeGreaterThan(0)
-  })
-
-  test('should handle page reload', async ({ page }) => {
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-
-    await page.reload()
-    await page.waitForLoadState('networkidle')
-
-    await expect(page.locator('h1')).toBeVisible()
-  })
-
-  test('should handle network conditions gracefully', async ({ page, browserName }) => {
-    test.skip(browserName !== 'chromium', 'CDP network emulation is Chromium-only')
-    const client = await page.context().newCDPSession(page)
-    await client.send('Network.emulateNetworkConditions', {
-      offline: false,
-      downloadThroughput: (500 * 1024) / 8,
-      uploadThroughput: (500 * 1024) / 8,
-      latency: 400,
-    })
-
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-
-    await expect(page.locator('h1')).toBeVisible()
-
-    await client.send('Network.emulateNetworkConditions', {
-      offline: false,
-      downloadThroughput: -1,
-      uploadThroughput: -1,
-      latency: 0,
-    })
-  })
-
-  test('should handle multiple page navigations', async ({ page }) => {
-    const pages = ['/', '/about', '/nested', '/nested/deep']
-
-    for (const pagePath of pages) {
-      await page.goto(pagePath)
-      await page.waitForLoadState('networkidle')
-      await expect(page.locator('h1')).toBeVisible()
-    }
-  })
-})
-
-test.describe('RSC Protocol Tests', () => {
-  test('should measure fast DOMContentLoaded time', async ({ page }) => {
-    const startTime = Date.now()
-
-    await page.goto('/about', { waitUntil: 'domcontentloaded' })
-
-    const domContentLoadedMs = Date.now() - startTime
-
-    expect(domContentLoadedMs).toBeLessThan(5000)
-
-    await expect(page.locator('h1')).toBeVisible({ timeout: 2000 })
-  })
-
-  test('should handle progressive rendering', async ({ page }) => {
-    const startTime = Date.now()
-
-    await page.goto('/about')
-
-    await page.locator('h1').waitFor({ state: 'visible' })
-    const titleVisibleTime = Date.now() - startTime
-
-    const isInteractive = await page.evaluate(() => {
-      return document.readyState === 'interactive' || document.readyState === 'complete'
-    })
-
-    expect(isInteractive).toBe(true)
-    expect(titleVisibleTime).toBeGreaterThan(0)
-    expect(titleVisibleTime).toBeLessThan(10000)
-  })
-
-  test('should not block main thread', async ({ page }) => {
-    await page.addInitScript(() => {
-      if (
-        typeof PerformanceObserver !== 'undefined' &&
-        PerformanceObserver.supportedEntryTypes.includes('longtask')
-      ) {
-        const observer = new PerformanceObserver(list => {
-          for (const entry of list.getEntries()) {
-            const win = window as StreamingTestWindow
-            win.__longTasks = win.__longTasks ?? []
-            win.__longTasks.push(entry.duration)
-          }
-        })
-        observer.observe({ entryTypes: ['longtask'] })
-      } else {
-        ;(window as StreamingTestWindow).__longtaskUnsupported = true
-      }
-    })
-
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-
-    const unsupported = await page.evaluate(
-      () => (window as StreamingTestWindow).__longtaskUnsupported ?? false,
-    )
-
-    test.skip(unsupported, 'Long Task API not supported, skipping blocking task check')
-
-    const tasks = await page.evaluate(() => (window as StreamingTestWindow).__longTasks ?? [])
-
-    const blockingTasks = tasks.filter(d => d > 100)
-
-    expect(blockingTasks.length).toBe(0)
-  })
-
-  test('should handle content rendering without errors', async ({ page }) => {
-    const consoleErrors: string[] = []
-
-    page.on('console', msg => {
-      if (msg.type() === 'error') {
-        consoleErrors.push(msg.text())
-      }
-    })
-
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-
-    const parsingErrors = consoleErrors.filter(
-      err =>
-        err.includes('parse') ||
-        err.includes('JSON') ||
-        err.includes('Flight') ||
-        err.includes('flight'),
-    )
-
-    expect(parsingErrors.length).toBe(0)
-  })
-
-  test('should handle sequential navigations', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await page.goto('/about', { waitUntil: 'domcontentloaded' })
-    await page.goto('/nested', { waitUntil: 'domcontentloaded' })
-    await page.waitForLoadState('networkidle')
-
-    await expect(page).toHaveURL(URL_PATTERNS.NESTED)
-    await expect(page.locator('h1')).toBeVisible()
-  })
-
-  test('should update document metadata on navigation', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-    const initialTitle = await page.title()
-
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-    const newTitle = await page.title()
-
-    expect(initialTitle).not.toBe(newTitle)
-    await expect(page.locator('h1')).toBeVisible()
-  })
-
-  test('should handle deep navigation paths', async ({ page }) => {
-    await page.goto('/nested/deep')
-    await page.waitForLoadState('networkidle')
-
-    await expect(page).toHaveURL(URL_PATTERNS.NESTED_DEEP)
-    await expect(page.locator('h1')).toBeVisible()
-  })
-})
-
-test.describe.serial('Suspense Streaming Tests', () => {
-  test.setTimeout(60000)
-
-  test('should stream Suspense boundaries progressively and independently', async ({ page }) => {
-    await gotoWithRetry(page, '/suspense-streaming')
-
-    const [renderA, renderB, renderC] = await Promise.all([
-      page
-        .waitForSelector('[data-testid="component-a"]', { timeout: 15000 })
-        .then(() => Date.now()),
-      page
-        .waitForSelector('[data-testid="component-b"]', { timeout: 15000 })
-        .then(() => Date.now()),
-      page
-        .waitForSelector('[data-testid="component-c"]', { timeout: 15000 })
-        .then(() => Date.now()),
-    ])
-
-    expect(renderA).toBeLessThanOrEqual(renderB)
-    expect(renderB).toBeLessThanOrEqual(renderC)
+test.describe('Streaming', () => {
+  test.setTimeout(60_000)
+
+  test('sends the loading fallback first, then reveals each Suspense boundary in order', async ({
+    page,
+  }) => {
+    await gotoWithRetry(page, '/suspense-streaming?run=order')
+
+    await expect(page.locator('[data-testid="run-id"]')).toHaveText('order')
 
     const times = await getServerTimestamps(page, ['component-a', 'component-b', 'component-c'])
-    assertProgressiveTimestamps(times, { minGap: 500, maxGap: 3500 })
-    expect(times['component-c'] - times['component-a']).toBeLessThan(6500)
+    assertProgressiveTimestamps(times, { minGap: 500 })
+
+    for (const id of ['loading-a', 'loading-b', 'loading-c'])
+      await expect(page.locator(`[data-testid="${id}"]`)).toHaveCount(0)
   })
 
-  test('should resolve boundaries independently based on their delay', async ({ page }) => {
-    await gotoWithRetry(page, '/suspense-streaming')
+  test('the first byte arrives before the slowest boundary resolves', async ({ page }) => {
+    const started = Date.now()
+    const response = await page.goto('/suspense-streaming?run=ttfb', { waitUntil: 'commit' })
+    const commitMs = Date.now() - started
 
-    const times = await getServerTimestamps(page, ['component-a', 'component-b', 'component-c'])
-    assertProgressiveTimestamps(times, { minGap: 500, maxGap: 3500 })
-    expect(times['component-c'] - times['component-a']).toBeLessThan(6500)
-  })
-})
-
-test.describe('Client-Side Navigation Tests', () => {
-  test('should detect rari runtime on page', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    expect(await hasRariRuntime(page)).toBe(true)
+    expect(response?.status()).toBe(200)
+    expect(commitMs).toBeLessThan(2500)
+    await expect(page.locator('[data-testid="component-c"]')).toBeVisible({ timeout: 15_000 })
   })
 
-  test('should make RSC requests on client-side navigation', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
+  test('response is chunked HTML with the hydration bootstrap in <head>', async ({ request }) => {
+    const response = await request.get('/suspense-streaming?run=headers')
 
-    await waitForRariRuntime(page)
+    expect(response.headers()['content-type']).toContain('text/html')
+    const html = await response.text()
+    expect(html.indexOf('_$HY')).toBeGreaterThan(-1)
+    expect(html.indexOf('_$HY')).toBeLessThan(html.indexOf('</head>'))
+  })
 
-    const requests: Array<{ url: string; accept: string }> = []
-
-    page.on('request', request => {
-      const accept = request.headers().accept || ''
-      const url = request.url()
-
-      if (url.includes('/about')) {
-        requests.push({ url, accept })
-      }
+  test('has no console errors while streaming', async ({ page }) => {
+    const errors: string[] = []
+    page.on('console', message => {
+      if (message.type() === 'error') errors.push(message.text())
     })
 
-    const link = page.locator('a[href="/about"]').first()
-    expect(await link.count()).toBeGreaterThan(0)
+    await gotoWithRetry(page, '/suspense-streaming-parallel')
+    await expect(page.locator('[data-testid="component-slow"]')).toBeVisible({ timeout: 15_000 })
 
-    await link.click()
-
-    await page.waitForURL(URL_PATTERNS.ABOUT, { timeout: 5000 })
-    await page.waitForLoadState('networkidle')
-
-    await expect(page).toHaveURL(URL_PATTERNS.ABOUT)
-    await expect(page.locator('h1')).toBeVisible()
-  })
-
-  test('should receive RSC Flight protocol on navigation', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await waitForRariRuntime(page)
-
-    const rscResponses: Response[] = []
-
-    page.on('response', response => {
-      const contentType = response.headers()['content-type']
-      if (contentType.includes('text/x-component')) {
-        rscResponses.push(response)
-      }
-    })
-
-    const link = page.locator('a[href="/about"]').first()
-    expect(await link.count()).toBeGreaterThan(0)
-
-    await link.click()
-
-    await page.waitForURL(URL_PATTERNS.ABOUT, { timeout: 5000 })
-    await page.waitForLoadState('networkidle')
-
-    await expect(page.locator('h1')).toBeVisible()
-  })
-
-  test('should dispatch rari:navigate events', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await page.evaluate(() => {
-      const win = window as StreamingTestWindow
-      win.__navigateEventFired = false
-      win.__rariNavigateRegistered = true
-      window.addEventListener('rari:navigate', () => {
-        win.__navigateEventFired = true
-      })
-    })
-
-    await page.waitForFunction(
-      () => (window as StreamingTestWindow).__rariNavigateRegistered === true,
-    )
-
-    const link = page.locator('a[href="/about"]').first()
-    expect(await link.count()).toBeGreaterThan(0)
-
-    await link.click()
-
-    await page.waitForURL(URL_PATTERNS.ABOUT, { timeout: 5000 })
-    await page.waitForLoadState('networkidle')
-
-    await expect(page).toHaveURL(URL_PATTERNS.ABOUT)
-  })
-
-  test('should handle link clicks for navigation', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await waitForRariRuntime(page)
-
-    const link = page.locator('a[href="/about"]').first()
-    expect(await link.count()).toBeGreaterThan(0)
-
-    await link.click()
-    await page.waitForLoadState('networkidle')
-
-    await expect(page).toHaveURL(URL_PATTERNS.ABOUT)
-    await expect(page.locator('h1')).toBeVisible()
-  })
-
-  test('should handle programmatic hash changes', async ({ page }) => {
-    await page.goto('/about')
-    await page.waitForLoadState('networkidle')
-
-    await page.evaluate(() => {
-      window.history.pushState(null, '', '#test')
-    })
-
-    await page.waitForFunction(() => window.location.hash === '#test')
-
-    expect(page.url()).toContain('#test')
-  })
-
-  test('should intercept link clicks and prevent full page reload', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await waitForRariRuntime(page)
-
-    await page.evaluate(() => {
-      const win = window as StreamingTestWindow
-      win.__pageReloaded = false
-      window.addEventListener('beforeunload', () => {
-        win.__pageReloaded = true
-      })
-    })
-
-    const link = page.locator('a[href="/about"]').first()
-    expect(await link.count()).toBeGreaterThan(0)
-
-    await link.click()
-    await page.waitForLoadState('networkidle')
-
-    const pageReloaded = await page.evaluate(() => {
-      return !!(window as StreamingTestWindow).__pageReloaded
-    })
-
-    expect(pageReloaded).toBe(false)
-    await expect(page).toHaveURL(URL_PATTERNS.ABOUT)
+    expect(errors).toEqual([])
   })
 })

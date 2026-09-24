@@ -1,14 +1,6 @@
 #![expect(clippy::missing_errors_doc, clippy::too_many_lines)]
 
-use std::{
-    env,
-    fmt::Write,
-    str,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::{env, fmt::Write, str, sync::Arc};
 
 use axum::{
     body::{Body, Bytes},
@@ -19,25 +11,20 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use cow_utils::CowUtils;
 use rari_error::RariError;
-use rustc_hash::FxHashMap;
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::{
-    rendering::{
-        base::{
-            constants::{ACTION_FLIGHT_ENCODE_SCRIPT, ACTION_HANDLER_SCRIPT, GET_RSC_BINARY_B64},
-            renderer::{parse_solid_action_outcome, solid_action_script},
-            run_with_renderer_result,
-        },
-        layout::{LayoutRenderer, create_layout_context},
+    rendering::base::{
+        renderer::{parse_solid_action_outcome, solid_action_script},
+        run_with_renderer_result,
     },
-    runtime::factory::JsRuntimeInterface,
+    runtime::{JsExecutionRuntime, factory::JsRuntimeInterface},
     server::{
         ServerState,
         cache::revalidate::{invalidate_route_caches, invalidate_route_caches_on},
-        config::{Framework, RedirectConfig},
-        core::utils::http::{extract_headers, extract_search_params, is_origin_allowed},
+        config::RedirectConfig,
+        core::utils::http::{extract_headers, is_origin_allowed},
         error_response,
         middleware::request_context::{PendingCookie, PendingCookieKey, RequestContext},
     },
@@ -186,100 +173,6 @@ fn check_origin(headers: &HeaderMap, allowed_origins: &[String]) -> Result<(), R
     Err(RariError::forbidden("Origin or referer required"))
 }
 
-fn build_reply_action_script(action_id: &str, body_text: &str) -> Result<String, RariError> {
-    let action_id_json = serde_json::to_string(action_id)
-        .map_err(|e| RariError::serialization(format!("Failed to serialize action id: {e}")))?;
-    let body_text_json = serde_json::to_string(body_text)
-        .map_err(|e| RariError::serialization(format!("Failed to serialize action body: {e}")))?;
-
-    Ok(ACTION_HANDLER_SCRIPT
-        .cow_replace("__RARI_ACTION_MODE__", "\"reply\"")
-        .cow_replace("__RARI_ACTION_ID__", &action_id_json)
-        .cow_replace("__RARI_ACTION_BODY__", &body_text_json)
-        .cow_replace("__RARI_ACTION_BODY_B64__", "\"\"")
-        .cow_replace("__RARI_ACTION_CONTENT_TYPE__", "\"\"")
-        .cow_replace("__RARI_ACTION_FORM_ENTRIES__", "[]")
-        .into_owned())
-}
-
-fn build_multipart_action_script(
-    action_id: &str,
-    body: &[u8],
-    content_type: &str,
-) -> Result<String, RariError> {
-    let action_id_json = serde_json::to_string(action_id)
-        .map_err(|e| RariError::serialization(format!("Failed to serialize action id: {e}")))?;
-    let body_b64_json = serde_json::to_string(&BASE64_STANDARD.encode(body))
-        .map_err(|e| RariError::serialization(format!("Failed to serialize action body: {e}")))?;
-    let content_type_json = serde_json::to_string(content_type)
-        .map_err(|e| RariError::serialization(format!("Failed to serialize content type: {e}")))?;
-
-    Ok(ACTION_HANDLER_SCRIPT
-        .cow_replace("__RARI_ACTION_MODE__", "\"reply-multipart\"")
-        .cow_replace("__RARI_ACTION_ID__", &action_id_json)
-        .cow_replace("__RARI_ACTION_BODY__", "\"\"")
-        .cow_replace("__RARI_ACTION_BODY_B64__", &body_b64_json)
-        .cow_replace("__RARI_ACTION_CONTENT_TYPE__", &content_type_json)
-        .cow_replace("__RARI_ACTION_FORM_ENTRIES__", "[]")
-        .into_owned())
-}
-
-fn build_form_action_script(body: &[u8], content_type: &str) -> Result<String, RariError> {
-    let body_b64_json = serde_json::to_string(&BASE64_STANDARD.encode(body))
-        .map_err(|e| RariError::serialization(format!("Failed to serialize action body: {e}")))?;
-    let content_type_json = serde_json::to_string(content_type)
-        .map_err(|e| RariError::serialization(format!("Failed to serialize content type: {e}")))?;
-
-    Ok(ACTION_HANDLER_SCRIPT
-        .cow_replace("__RARI_ACTION_MODE__", "\"form\"")
-        .cow_replace("__RARI_ACTION_ID__", "\"\"")
-        .cow_replace("__RARI_ACTION_BODY__", "\"\"")
-        .cow_replace("__RARI_ACTION_BODY_B64__", &body_b64_json)
-        .cow_replace("__RARI_ACTION_CONTENT_TYPE__", &content_type_json)
-        .cow_replace("__RARI_ACTION_FORM_ENTRIES__", "[]")
-        .into_owned())
-}
-
-fn is_form_content_type(content_type: &str) -> bool {
-    content_type.starts_with("multipart/form-data")
-        || content_type.starts_with("application/x-www-form-urlencoded")
-}
-
-fn action_script_name(action_id: Option<&str>) -> String {
-    static SCRIPT_COUNTER: AtomicU64 = AtomicU64::new(0);
-    let nonce = SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let base = match action_id {
-        Some(action_id) => {
-            format!("action_{}", action_id.cow_replace('/', "_").cow_replace('#', "_"))
-        }
-        None => "action_form".to_string(),
-    };
-    // Use a request-scoped suffix for cache keys. `#` breaks TypeScript transpilation.
-    format!("{base}_req{nonce}.ts")
-}
-
-fn build_action_script(
-    action_id: Option<&str>,
-    content_type: &str,
-    body: &[u8],
-) -> Result<String, RariError> {
-    match action_id {
-        Some(action_id) if content_type.starts_with("multipart/form-data") => {
-            build_multipart_action_script(action_id, body, content_type)
-        }
-        Some(action_id) => {
-            let body_text = str::from_utf8(body).map_err(|_| {
-                RariError::bad_request("Server action body is not valid UTF-8".to_string())
-            })?;
-            build_reply_action_script(action_id, body_text)
-        }
-        None if is_form_content_type(content_type) => build_form_action_script(body, content_type),
-        None => Err(RariError::bad_request(
-            "Missing rsc-action-id header for non-form server action request".to_string(),
-        )),
-    }
-}
-
 fn redirect_target_path(redirect_url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(redirect_url) {
         parsed.path().to_string()
@@ -310,24 +203,7 @@ async fn invalidate_redirect_target_caches(
     }
 }
 
-fn document_form_redirect_response(
-    redirect_url: &str,
-    pending_cookies: &dashmap::DashMap<PendingCookieKey, PendingCookie>,
-) -> Response {
-    #[expect(clippy::expect_used, reason = "Response::builder() with valid components never fails")]
-    let mut response = Response::builder()
-        .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, redirect_url)
-        .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, private")
-        .body(Body::empty())
-        .expect("Valid redirect response");
-    append_pending_cookies(response.headers_mut(), pending_cookies);
-    response
-}
-
 const ACTION_FORM_STATE_COOKIE: &str = "rari-action-form-state";
-const ACTION_REVALIDATION_DYNAMIC_ONLY: &str = "2";
-
 fn action_form_state_cookie_secure() -> bool {
     env::var("NODE_ENV").map(|value| value == "production").unwrap_or(false)
 }
@@ -345,14 +221,6 @@ fn decode_action_form_state_cookie_value(encoded: &str) -> Option<Value> {
     }
 
     serde_json::from_str(encoded).ok()
-}
-
-fn extract_and_strip_form_state(value: &mut Value) -> Option<Value> {
-    let form_state = value.get("~rariFormState").cloned();
-    if let Some(obj) = value.as_object_mut() {
-        obj.remove("~rariFormState");
-    }
-    form_state
 }
 
 pub fn stage_action_form_state_cookie(
@@ -469,184 +337,8 @@ fn rpc_action_error_response(
     response
 }
 
-fn rpc_action_flight_response(
-    body: Vec<u8>,
-    redirect: Option<&str>,
-    revalidated_path: Option<&str>,
-    pending_cookies: &dashmap::DashMap<PendingCookieKey, PendingCookie>,
-) -> Response {
-    let mut builder = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/x-component")
-        .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, private");
-
-    if let Some(redirect_url) = redirect {
-        builder = builder.header("x-action-redirect", format!("{redirect_url};push"));
-    }
-
-    if let Some(path) = revalidated_path {
-        builder = builder
-            .header("x-action-revalidated", ACTION_REVALIDATION_DYNAMIC_ONLY)
-            .header("x-action-revalidated-path", path);
-    }
-
-    #[expect(clippy::expect_used, reason = "Response::builder() with valid components never fails")]
-    let mut response = builder.body(Body::from(body)).expect("Valid flight response");
-    append_pending_cookies(response.headers_mut(), pending_cookies);
-    response
-}
-
-async fn capture_last_action_flight_binary(
-    runtime: &Arc<dyn JsRuntimeInterface>,
-) -> Result<Option<Vec<u8>>, RariError> {
-    let result = runtime
-        .execute_script("get_action_flight_binary_b64".to_string(), GET_RSC_BINARY_B64.to_string())
-        .await?;
-
-    Ok(result.as_str().and_then(|b64| BASE64_STANDARD.decode(b64).ok()))
-}
-
-fn parse_query_string(search: &str) -> FxHashMap<String, String> {
-    let mut query_params = FxHashMap::default();
-    let query = search.strip_prefix('?').unwrap_or(search);
-    if query.is_empty() {
-        return query_params;
-    }
-
-    for pair in query.split('&') {
-        if let Some((key, value)) = pair.split_once('=') {
-            let decoded_key = urlencoding::decode(key)
-                .map(std::borrow::Cow::into_owned)
-                .unwrap_or_else(|_| key.to_string());
-            let decoded_value = urlencoding::decode(value)
-                .map(std::borrow::Cow::into_owned)
-                .unwrap_or_else(|_| value.to_string());
-            query_params.insert(decoded_key, decoded_value);
-        } else if !pair.is_empty() {
-            let decoded_key = urlencoding::decode(pair)
-                .map(std::borrow::Cow::into_owned)
-                .unwrap_or_else(|_| pair.to_string());
-            query_params.insert(decoded_key, String::new());
-        }
-    }
-
-    query_params
-}
-
-fn parse_action_refresh_target(
-    headers: &HeaderMap,
-) -> Option<(String, String, FxHashMap<String, String>)> {
-    if let Some(state) = headers.get("rari-router-state").and_then(|value| value.to_str().ok()) {
-        if let Ok(parsed) = serde_json::from_str::<Value>(state) {
-            let pathname = parsed.get("pathname").and_then(Value::as_str)?;
-            let search = parsed.get("search").and_then(Value::as_str).unwrap_or("");
-            let query_params = parse_query_string(search);
-            return Some((pathname.to_string(), search.to_string(), query_params));
-        }
-    }
-
-    if let Some(referer) = headers.get(header::REFERER).and_then(|value| value.to_str().ok()) {
-        if let Ok(url) = url::Url::parse(referer) {
-            let pathname = url.path().to_string();
-            let search = url.query().map_or_else(String::new, |query| format!("?{query}"));
-            let query_params = parse_query_string(&search);
-            return Some((pathname, search, query_params));
-        }
-    }
-
-    None
-}
-
 fn is_server_action_request(headers: &HeaderMap) -> bool {
-    if headers.get("rsc-action-id").is_some() {
-        return true;
-    }
-
-    let content_type =
-        headers.get(header::CONTENT_TYPE).and_then(|value| value.to_str().ok()).unwrap_or("");
-
-    content_type.starts_with("multipart/form-data")
-        || content_type.starts_with("application/x-www-form-urlencoded")
-}
-
-async fn compose_action_refresh_route(
-    state: &ServerState,
-    headers: &HeaderMap,
-    request_context: Arc<RequestContext>,
-    sticky_runtime: Option<&Arc<dyn JsRuntimeInterface>>,
-) -> Result<Option<String>, RariError> {
-    let Some((pathname, search, query_params)) = parse_action_refresh_target(headers) else {
-        return Ok(None);
-    };
-
-    let Some(app_router) = &state.app_router else {
-        return Ok(None);
-    };
-
-    let mut route_match = match app_router.match_route(&pathname) {
-        Ok(route_match) => route_match,
-        Err(_) => app_router.create_not_found_match(&pathname).ok_or_else(|| {
-            RariError::internal(format!(
-                "Failed to create not-found match for action refresh: {pathname}"
-            ))
-        })?,
-    };
-
-    let search_params = extract_search_params(query_params);
-    let request_headers = extract_headers(headers);
-    let context = create_layout_context(
-        route_match.params.clone(),
-        search_params,
-        request_headers,
-        route_match.pathname.clone(),
-    );
-
-    if route_match.not_found.is_none() && route_match.route.is_dynamic {
-        let layout_renderer = LayoutRenderer::with_shared_cache(
-            Arc::clone(&state.renderer),
-            Arc::clone(&state.layout_html_cache),
-        );
-        match layout_renderer.check_page_not_found_on(&route_match, &context, sticky_runtime).await
-        {
-            Ok(true) => {
-                if let Some(not_found_entry) = app_router.find_not_found(&route_match.route.path) {
-                    route_match.not_found = Some(not_found_entry);
-                }
-            }
-            Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(error = %error, path = %pathname, "not-found check failed during action refresh");
-            }
-        }
-    }
-
-    if let Err(error) = if let Some(runtime) = sticky_runtime {
-        invalidate_route_caches_on(state, &pathname, runtime).await
-    } else {
-        invalidate_route_caches(state, &pathname).await
-    } {
-        tracing::warn!(
-            error = %error,
-            path = %pathname,
-            "action route cache invalidation failed"
-        );
-    }
-
-    let layout_renderer = LayoutRenderer::with_shared_cache(
-        Arc::clone(&state.renderer),
-        Arc::clone(&state.layout_html_cache),
-    );
-    if let Some(runtime) = sticky_runtime {
-        layout_renderer
-            .compose_route_for_action_refresh_on(runtime, &route_match, &context, search)
-            .await?;
-    } else {
-        layout_renderer
-            .compose_route_for_action_refresh(&route_match, &context, request_context, search)
-            .await?;
-    }
-
-    Ok(Some(pathname))
+    headers.get("rsc-action-id").is_some()
 }
 
 pub async fn handle_server_action(
@@ -686,18 +378,8 @@ async fn handle_server_action_at_path(
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.is_empty());
 
-    let is_document_form_post = action_id.is_none();
-
-    let page_form_redirect_path =
-        if request_path == "/_rari/action" { None } else { Some(request_path.clone()) };
-
-    let request_context = Arc::new(
-        RequestContext::new(request_path)
-            .with_http_headers(extract_headers(&headers))
-            .with_action_form_state(parse_action_form_state_from_cookie(
-                headers.get(header::COOKIE).and_then(|value| value.to_str().ok()),
-            )),
-    );
+    let request_context =
+        Arc::new(RequestContext::new(request_path).with_http_headers(extract_headers(&headers)));
 
     if let Some(action_id) = action_id {
         let export_name = action_export_name(action_id);
@@ -713,245 +395,19 @@ async fn handle_server_action_at_path(
         }
     }
 
-    let content_type = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("text/plain;charset=UTF-8");
-
     let runtime = {
         let renderer = state.renderer.lock().await;
         Arc::clone(&renderer.runtime)
     };
 
-    if state.config.framework == Framework::Solid {
-        return Ok(handle_solid_server_action(
-            &state,
-            &runtime,
-            &request_context,
-            action_id,
-            &body,
-        )
-        .await);
-    }
-
-    let script = match build_action_script(action_id, content_type, &body) {
-        Ok(script) => script,
-        Err(e) => {
-            tracing::error!("Failed to build action script: {}", e);
-            return Ok(rpc_action_error_response(
-                &e,
-                state.config.is_development(),
-                Some(&request_context.pending_cookies),
-            ));
-        }
-    };
-
-    let script_name = action_script_name(action_id);
-
-    if let Err(e) = run_with_renderer_result(Arc::clone(&state.renderer), |renderer| async move {
-        renderer.ensure_rsc_pipeline().await
-    })
-    .await
-    {
-        tracing::error!("Failed to ensure RSC pipeline for server action: {}", e);
-        return Ok(rpc_action_error_response(
-            &e,
-            state.config.is_development(),
-            Some(&request_context.pending_cookies),
-        ));
-    }
-
-    let leased = match runtime.acquire_request_runtime(Arc::clone(&request_context)).await {
-        Ok(leased) => leased,
-        Err(e) => {
-            tracing::error!("Failed to acquire JS runtime for server action: {}", e);
-            if is_document_form_post {
-                #[expect(
-                    clippy::expect_used,
-                    reason = "Response::builder() with valid components never fails"
-                )]
-                let mut response = Response::builder()
-                    .status(error_response::status(&e))
-                    .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, private")
-                    .body(Body::from(e.safe_message(state.config.is_development())))
-                    .expect("Valid error response");
-                append_pending_cookies(response.headers_mut(), &request_context.pending_cookies);
-                return Ok(response);
-            }
-            return Ok(rpc_action_error_response(
-                &e,
-                state.config.is_development(),
-                Some(&request_context.pending_cookies),
-            ));
-        }
-    };
-
-    let mut value = match leased.execute_script(script_name, script).await {
-        Ok(value) => value,
-        Err(e) => {
-            tracing::error!("Server action execution failed: {}", e);
-            let _ = leased.release().await;
-            if is_document_form_post {
-                #[expect(
-                    clippy::expect_used,
-                    reason = "Response::builder() with valid components never fails"
-                )]
-                let mut response = Response::builder()
-                    .status(error_response::status(&e))
-                    .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, private")
-                    .body(Body::from(e.safe_message(state.config.is_development())))
-                    .expect("Valid error response");
-                append_pending_cookies(response.headers_mut(), &request_context.pending_cookies);
-                return Ok(response);
-            }
-
-            return Ok(rpc_action_error_response(
-                &e,
-                state.config.is_development(),
-                Some(&request_context.pending_cookies),
-            ));
-        }
-    };
-
-    let redirect_config = state.config.redirect_config();
-    if is_document_form_post {
-        if let Some(form_state) = extract_and_strip_form_state(&mut value) {
-            stage_action_form_state_cookie(&request_context.pending_cookies, &form_state);
-        }
-    }
-
-    let redirect = extract_redirect_from_result(&value, &redirect_config);
-
-    if let Some(ref redirect_url) = redirect {
-        invalidate_redirect_target_caches(&state, redirect_url, Some(leased.runtime())).await;
-    }
-
-    if is_document_form_post {
-        let _ = leased.release().await;
-        if is_failed_action_result(&value) {
-            let error_message = value
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("Server action failed")
-                .to_owned();
-            #[expect(
-                clippy::expect_used,
-                reason = "Response::builder() with valid components never fails"
-            )]
-            let mut response = Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, private")
-                .body(Body::from(error_message))
-                .expect("Valid error response");
-            append_pending_cookies(response.headers_mut(), &request_context.pending_cookies);
-            return Ok(response);
-        }
-
-        if let Some(redirect_url) = redirect {
-            return Ok(document_form_redirect_response(
-                &redirect_url,
-                &request_context.pending_cookies,
-            ));
-        }
-
-        let document_redirect_target = headers
-            .get(header::REFERER)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned)
-            .filter(|value| !value.is_empty())
-            .or(page_form_redirect_path);
-
-        if let Some(document_redirect_target) = document_redirect_target {
-            invalidate_redirect_target_caches(&state, &document_redirect_target, None).await;
-            return Ok(document_form_redirect_response(
-                &document_redirect_target,
-                &request_context.pending_cookies,
-            ));
-        }
-
-        #[expect(
-            clippy::expect_used,
-            reason = "Response::builder() with valid components never fails"
-        )]
-        let mut response = Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, private")
-            .body(Body::from("Missing redirect target for document form action"))
-            .expect("Valid error response");
-        append_pending_cookies(response.headers_mut(), &request_context.pending_cookies);
-        return Ok(response);
-    }
-
-    let mut revalidated_path = None;
-    if redirect.is_none() {
-        let refresh_result = compose_action_refresh_route(
-            &state,
-            &headers,
-            Arc::clone(&request_context),
-            Some(leased.runtime()),
-        )
-        .await;
-        revalidated_path = match refresh_result {
-            Ok(path) => path,
-            Err(error) => {
-                tracing::warn!(error = %error, "action refresh route composition failed");
-                None
-            }
-        };
-    }
-
-    // Request-unique name so the encode script is never served from module cache /
-    // already-evaluated shortcuts (fixed names can leave lastRscBinary stale).
-    let encode_script_name = {
-        static ENCODE_COUNTER: AtomicU64 = AtomicU64::new(0);
-        let nonce = ENCODE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        format!("action_flight_encode_req{nonce}.ts")
-    };
-
-    let flight_body = match async {
-        leased.execute_script(encode_script_name, ACTION_FLIGHT_ENCODE_SCRIPT.to_string()).await?;
-        capture_last_action_flight_binary(leased.runtime()).await
-    }
-    .await
-    {
-        Ok(body) => body,
-        Err(error) => {
-            tracing::error!("Failed to encode action flight response: {}", error);
-            let _ = leased.release().await;
-            return Ok(rpc_action_error_response(
-                &error,
-                state.config.is_development(),
-                Some(&request_context.pending_cookies),
-            ));
-        }
-    };
-
-    if let Err(e) = leased.release().await {
-        tracing::error!("Failed to release action runtime lease: {}", e);
-    }
-
-    let Some(flight_body) = flight_body else {
-        tracing::error!("RPC server action did not produce a Flight response payload");
-        return Ok(rpc_action_error_response(
-            &RariError::internal("RPC server action did not produce a Flight response payload"),
-            state.config.is_development(),
-            Some(&request_context.pending_cookies),
-        ));
-    };
-
-    Ok(rpc_action_flight_response(
-        flight_body,
-        redirect.as_deref(),
-        revalidated_path.as_deref(),
-        &request_context.pending_cookies,
-    ))
+    Ok(handle_solid_server_action(&state, &runtime, &request_context, action_id, &body).await)
 }
 
 const SOLID_ACTION_CONTENT_TYPE: &str = "application/x-rari-seroval";
 
 async fn handle_solid_server_action(
     state: &ServerState,
-    runtime: &Arc<crate::runtime::JsExecutionRuntime>,
+    runtime: &Arc<JsExecutionRuntime>,
     request_context: &Arc<RequestContext>,
     action_id: Option<&str>,
     body: &Bytes,
@@ -966,16 +422,23 @@ async fn handle_solid_server_action(
             pending,
         );
     };
-    let args_expr = match std::str::from_utf8(body) {
-        Ok(text) => text,
-        Err(_) => {
-            return rpc_action_error_response(
-                &RariError::bad_request("Action payload must be valid UTF-8"),
-                is_development,
-                pending,
-            );
-        }
+    let Ok(args_expr) = str::from_utf8(body) else {
+        return rpc_action_error_response(
+            &RariError::bad_request("Action payload must be valid UTF-8"),
+            is_development,
+            pending,
+        );
     };
+
+    // Broadcast loads need every pool slot, so the pipeline must exist before any slot is leased.
+    if let Err(e) = run_with_renderer_result(Arc::clone(&state.renderer), |renderer| async move {
+        renderer.ensure_solid_actions_pipeline().await
+    })
+    .await
+    {
+        tracing::error!("Failed to prepare Solid action pipeline: {}", e);
+        return rpc_action_error_response(&e, is_development, pending);
+    }
 
     let leased = match runtime.acquire_request_runtime(Arc::clone(request_context)).await {
         Ok(leased) => leased,
@@ -985,14 +448,11 @@ async fn handle_solid_server_action(
         }
     };
 
-    let outcome = match state.renderer.lock().await.ensure_solid_actions_pipeline().await {
-        Ok(()) => match solid_action_script(action_id, args_expr) {
-            Ok(script) => leased
-                .execute_script("solid_action_dispatch".to_string(), script)
-                .await
-                .and_then(|value| parse_solid_action_outcome(&value)),
-            Err(e) => Err(e),
-        },
+    let outcome = match solid_action_script(action_id, args_expr) {
+        Ok(script) => leased
+            .execute_script("solid_action_dispatch".to_string(), script)
+            .await
+            .and_then(|value| parse_solid_action_outcome(&value)),
         Err(e) => Err(e),
     };
     if let Err(e) = leased.release().await {
@@ -1058,26 +518,6 @@ pub fn validate_redirect_url(url: &str, config: &RedirectConfig) -> Result<Strin
     }
 
     Ok(url.to_string())
-}
-
-fn is_failed_action_result(result: &Value) -> bool {
-    result.get("~promiseError").and_then(Value::as_bool) == Some(true)
-        || result.get("~timeoutError").is_some()
-        || result.get("success").and_then(Value::as_bool) == Some(false)
-}
-
-fn extract_redirect_from_result(result: &Value, config: &RedirectConfig) -> Option<String> {
-    if let Some(redirect) = result.get("redirect") {
-        if let Some(url) = redirect.as_str() {
-            return validate_redirect_url(url, config).ok();
-        }
-        if let Some(obj) = redirect.as_object()
-            && let Some(destination) = obj.get("destination").and_then(|d| d.as_str())
-        {
-            return validate_redirect_url(destination, config).ok();
-        }
-    }
-    None
 }
 
 pub fn is_reserved_export_name(name: &str) -> bool {
@@ -1748,56 +1188,5 @@ mod tests {
 
         let result = check_origin(&headers, &["https://rari.build".to_string()]);
         assert!(result.is_err(), "Cross-site origins must still be rejected");
-    }
-
-    #[test]
-    fn test_is_failed_action_result() {
-        assert!(is_failed_action_result(&serde_json::json!({ "success": false })));
-        assert!(is_failed_action_result(&serde_json::json!({ "~promiseError": true })));
-        assert!(is_failed_action_result(&serde_json::json!({ "~timeoutError": "timed out" })));
-        assert!(!is_failed_action_result(&serde_json::json!({ "success": true })));
-        assert!(!is_failed_action_result(&serde_json::json!({ "result": "ok" })));
-    }
-
-    #[test]
-    fn test_build_action_script_reply_mode() {
-        use super::build_action_script;
-
-        let script = build_action_script(
-            Some("actions/foo#bar"),
-            "text/plain;charset=UTF-8",
-            b"[\"hello\"]",
-        )
-        .expect("script");
-
-        assert!(script.contains("\"reply\""));
-        assert!(script.contains("decodeReply"));
-    }
-
-    #[test]
-    fn test_build_form_action_script_mode() {
-        use super::build_form_action_script;
-
-        let script = build_form_action_script(b"--test\r\n", "multipart/form-data; boundary=test")
-            .expect("script");
-
-        assert!(script.contains("\"form\""));
-        assert!(script.contains("decodeAction"));
-    }
-
-    #[test]
-    fn test_action_handler_script_has_isolate_safe_validation() {
-        assert!(ACTION_HANDLER_SCRIPT.contains("rari-action-handler-v3"));
-        assert!(ACTION_HANDLER_SCRIPT.contains("g.__RARI_ACTION_ARGS_VALIDATION__"));
-        assert!(ACTION_HANDLER_SCRIPT.contains("getActionArgsValidationApi"));
-        assert!(ACTION_HANDLER_SCRIPT.contains("initActionArgsValidationCore"));
-    }
-
-    #[test]
-    fn test_build_action_script_requires_form_without_action_id() {
-        use super::build_action_script;
-
-        let err = build_action_script(None, "text/plain", b"{}").expect_err("error");
-        assert!(err.to_string().contains("rsc-action-id"));
     }
 }

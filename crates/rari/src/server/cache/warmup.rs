@@ -14,8 +14,7 @@ use tokio::sync::{Mutex, OnceCell};
 
 use crate::{
     rendering::layout::{
-        ChunkedContentType, LayoutRenderContext, LayoutRenderer, drain_chunked_stream,
-        types::RenderResult,
+        LayoutRenderContext, LayoutRenderer, drain_chunked_stream, types::RenderResult,
     },
     server::{
         ServerState,
@@ -44,13 +43,7 @@ fn wrap_warmup_render_error(error: &RariError) -> RariError {
     wrapped
 }
 
-/// Serialize warmup renders to prevent V8 global state corruption.
-/// The RSC+Fizz pipeline shares V8 globals between the mutex-protected
-/// RSC render and the non-mutex Fizz render. Without serialization,
-/// concurrent warmup tasks interleave and produce wrong HTML.
-///
-/// The guard must cover both the HTML/Fizz render and the follow-up RSC
-/// render in [`warm_route`], not only the first call.
+/// Serialize warmup renders so concurrent warmup tasks cannot interleave on shared V8 globals.
 static WARMUP_RENDER_LOCK: OnceCell<Arc<Mutex<()>>> = OnceCell::const_new();
 
 async fn warmup_render_lock() -> Arc<Mutex<()>> {
@@ -152,7 +145,6 @@ async fn warm_route(
             &route_match,
             &context,
             Some(Arc::clone(&request_context)),
-            false,
             None,
         )
         .await
@@ -160,19 +152,17 @@ async fn warm_route(
 
     let html = match render_result {
         RenderResult::Static(html) => html,
-        RenderResult::Chunked {
-            content_type: ChunkedContentType::Html,
-            shell,
-            closing,
-            mut chunks,
-        } => match drain_chunked_stream(shell, closing, &mut chunks).await {
-            Ok(html) => html,
-            Err(error) => {
-                tracing::warn!("Skipping cache warmup for {path}: chunked stream failed: {error}");
-                return Ok(());
+        RenderResult::Chunked { shell, closing, mut chunks } => {
+            match drain_chunked_stream(shell, closing, &mut chunks).await {
+                Ok(html) => html,
+                Err(error) => {
+                    tracing::warn!(
+                        "Skipping cache warmup for {path}: chunked stream failed: {error}"
+                    );
+                    return Ok(());
+                }
             }
-        },
-        _ => return Ok(()),
+        }
     };
 
     let html_cache_key = response::ResponseCache::generate_cache_key(path, None);
@@ -242,44 +232,6 @@ async fn warm_route(
         };
 
         state.response_cache.set(html_cache_key, cached_response).await;
-    }
-
-    let rsc_result =
-        layout_renderer.render_route_by_mode(&route_match, &context, Some(request_context)).await;
-
-    if let Ok(rsc_flight_protocol) = rsc_result {
-        let rsc_cache_key =
-            response::ResponseCache::generate_cache_key_with_mode(path, None, Some("rsc"), None);
-
-        if for_response_cache {
-            let merged_tags = merge_warmup_cache_tags(state, cache_policy.tags.clone()).await;
-            let mut cache_headers = HeaderMap::new();
-
-            if let Some(ref metadata) = context.metadata
-                && let Ok(metadata_json) = serde_json::to_string(metadata)
-            {
-                let encoded_metadata = urlencoding::encode(&metadata_json);
-                if let Ok(header_value) = encoded_metadata.as_ref().parse() {
-                    cache_headers.insert("x-rari-metadata", header_value);
-                }
-            }
-
-            let cached_response = response::CachedResponse {
-                body: bytes::Bytes::from(rsc_flight_protocol),
-                headers: cache_headers,
-                metadata: response::CacheMetadata {
-                    cached_at: Instant::now(),
-                    ttl: cache_policy.ttl,
-                    etag: None,
-                    tags: merged_tags,
-                },
-                compressed_zstd: None,
-                compressed_br: None,
-                compressed_gzip: None,
-            };
-
-            state.response_cache.set(rsc_cache_key, cached_response).await;
-        }
     }
 
     Ok(())

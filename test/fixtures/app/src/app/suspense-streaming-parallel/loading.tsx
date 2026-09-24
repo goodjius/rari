@@ -1,9 +1,3 @@
-import { LoadingReveal } from '../page-transition'
-
-export default function ParallelPageLoading() {
-  return (
-    <LoadingReveal>
-      <div />
-    </LoadingReveal>
-  )
+export default function Loading() {
+  return <div data-testid="page-loading">Loading...</div>
 }

@@ -1,6 +1,7 @@
 {
   "extends": "../../../.config/typescript/solid-app.json",
   "compilerOptions": {
+    "customConditions": ["solid"],
     "paths": {
       "@/*": ["./src/*"]
     }

@@ -182,7 +182,6 @@ export function buildDevClientHead(
   options: {
     readonly viteOrigin?: string
     readonly cssHrefs?: readonly string[]
-    readonly framework?: 'react' | 'solid'
   } = {},
 ): string {
   const origin = (options.viteOrigin ?? '').replace(/\/$/, '')
@@ -197,21 +196,10 @@ export function buildDevClientHead(
     tags.push(`<link rel="stylesheet" href="${url}" />`)
   }
 
-  const refreshSrc = origin === '' ? '/@react-refresh' : `${origin}/@react-refresh`
   const viteClientSrc = origin === '' ? '/@vite/client' : `${origin}/@vite/client`
   const entryImport = origin === '' ? VIRTUAL_CLIENT_ENTRY : `${origin}/@id/${VIRTUAL_CLIENT_ENTRY}`
 
-  // Solid's HMR needs no global preamble: solid-refresh's Babel plugin wires
-  // each module itself against the `/@solid-refresh` runtime.
-  if (options.framework !== 'solid') {
-    tags.push(`<script type="module">
-import { injectIntoGlobalHook } from '${refreshSrc}'
-injectIntoGlobalHook(window)
-window.$RefreshReg$ = () => {}
-window.$RefreshSig$ = () => type => type
-window.__vite_plugin_react_preamble_installed__ = true
-</script>`)
-  }
+  // solid-refresh's Babel plugin wires each module against `/@solid-refresh`; no global preamble.
   tags.push(`<script type="module" src="${viteClientSrc}"></script>`)
   tags.push(`<script type="module">
 import '${entryImport}';

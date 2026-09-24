@@ -8,15 +8,6 @@ const FORCE_KILL_GRACE_MS = 1_000
 export async function evaluateGenerateStaticParams(compiledPath: string): Promise<unknown> {
   const href = pathToFileURL(compiledPath).href
   const script = `
-import { registerHooks } from "node:module";
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier === "react-server-dom-rari/server") {
-      return nextResolve("rari/runtime/rsc-references", context);
-    }
-    return nextResolve(specifier, context);
-  },
-});
 const mod = await import(${JSON.stringify(href)});
 const result =
   typeof mod.generateStaticParams !== "function"
@@ -28,14 +19,10 @@ process.send(result, () => {
 `
 
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      ['--conditions=react-server', '--input-type=module', '--eval', script],
-      {
-        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-        env: process.env,
-      },
-    )
+    const child = spawn(process.execPath, ['--input-type=module', '--eval', script], {
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      env: process.env,
+    })
 
     let stdout = ''
     let stderr = ''

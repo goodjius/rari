@@ -7,8 +7,8 @@ function normalizePathSegments(path: string | readonly string[] | undefined): st
   return [...path]
 }
 
-export default function DocsPage({ params }: PageProps) {
-  const pathArray = normalizePathSegments(params.path)
+export default function DocsPage(props: PageProps) {
+  const pathArray = normalizePathSegments(props.params.path)
   const pathString = pathArray.join('/')
 
   return (
@@ -17,9 +17,7 @@ export default function DocsPage({ params }: PageProps) {
       <p>This is a catch-all route.</p>
       <div data-testid="path-segments" data-segments={JSON.stringify(pathArray)}>
         {pathArray.map((segment, i) => (
-          <span key={segment} data-testid={`segment-${i}`}>
-            {segment}
-          </span>
+          <span data-testid={`segment-${i}`}>{segment}</span>
         ))}
       </div>
       <div data-testid="path-length">{String(pathArray.length)}</div>

@@ -21,20 +21,16 @@ use rari_error::RariError;
 use rustc_hash::FxHashMap;
 use tokio::{
     fs,
-    sync::{
-        mpsc::{Receiver, error::TryRecvError},
-        oneshot,
-    },
+    sync::mpsc::{Receiver, error::TryRecvError},
     time::{self, Duration},
 };
 
 use crate::{
     rendering::{
         layout::{
-            ChunkedContentType, LayoutRenderContext, LayoutRenderer, OpenGraphImage,
-            OpenGraphImageDescriptor, OpenGraphMetadata, PageMetadata, RenderResult,
-            TwitterMetadata, component_dist_path, create_layout_context, drain_chunked_stream,
-            sort_flight_protocol,
+            LayoutRenderContext, LayoutRenderer, OpenGraphImage, OpenGraphImageDescriptor,
+            OpenGraphMetadata, PageMetadata, RenderResult, TwitterMetadata, component_dist_path,
+            create_layout_context, drain_chunked_stream,
         },
         r#static::RscHtmlRenderer,
     },
@@ -46,17 +42,13 @@ use crate::{
         },
         cache::response,
         compression::{CompressionEncoding, compress_body, compress_stream},
-        config::{Config, Framework},
-        core::{
-            types::request::{RenderMode, RequestTypeDetector},
-            utils::{
-                self,
-                http::{
-                    extract_headers, extract_search_params, get_content_type,
-                    merge_vary_with_accept,
-                },
-                path_validation::validate_safe_path,
+        config::Config,
+        core::utils::{
+            self,
+            http::{
+                extract_headers, extract_search_params, get_content_type, merge_vary_with_accept,
             },
+            path_validation::validate_safe_path,
         },
         error_response,
         middleware::request_context::RequestContext,
@@ -217,19 +209,6 @@ fn should_use_streaming(route_match: &AppRouteMatch, config: &Config) -> bool {
         return false;
     }
     config.loading.enabled && route_match.loading.is_some()
-}
-
-fn spawn_page_metadata(
-    state: ServerState,
-    route_match: AppRouteMatch,
-    context: LayoutRenderContext,
-) -> oneshot::Receiver<Option<PageMetadata>> {
-    let (tx, rx) = oneshot::channel();
-    tokio::spawn(async move {
-        let metadata = collect_page_metadata(&state, &route_match, &context).await;
-        let _ = tx.send(metadata);
-    });
-    rx
 }
 
 pub(crate) async fn collect_page_metadata(
@@ -427,290 +406,135 @@ pub async fn render_with_fallback(
     }
 }
 
-pub async fn render_rsc_navigation_streaming(
-    state: Arc<ServerState>,
-    route_match: AppRouteMatch,
-    context: LayoutRenderContext,
-    accept_encoding: Option<&str>,
-) -> Result<Response, StatusCode> {
-    let layout_renderer = LayoutRenderer::with_shared_cache(
-        Arc::clone(&state.renderer),
-        Arc::clone(&state.layout_html_cache),
-    );
-    let is_not_found = route_match.not_found.is_some();
-
-    let request_context = Arc::new(
-        RequestContext::new(route_match.route.path.clone())
-            .with_http_headers(context.headers.clone()),
-    );
-
-    let render_result = match layout_renderer
-        .render_route_with_streaming(
-            &route_match,
-            &context,
-            Some(Arc::clone(&request_context)),
-            true,
-            None,
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(e) => {
-            tracing::error!(
-                "Failed to render RSC navigation for streaming '{}': {}",
-                route_match.route.path,
-                e
-            );
-            return Err(error_response::status(&e));
-        }
-    };
-
-    match render_result {
-        RenderResult::Chunked {
-            content_type: ChunkedContentType::RscFlight,
-            shell,
-            closing,
-            chunks,
-        } => Ok(render_chunked_response(
-            &state,
-            &context,
-            ChunkedContentType::RscFlight,
-            shell,
-            closing,
-            chunks,
-            is_not_found,
-            accept_encoding,
-        )),
-        RenderResult::Chunked { content_type: ChunkedContentType::Html, .. } => {
-            tracing::error!("HTML chunked render not supported in RSC-only mode");
-            Err(error_response::status(&RariError::internal(
-                "HTML chunked render not supported in RSC-only mode",
-            )))
-        }
-        RenderResult::Static(rsc_flight_protocol) => {
-            let status_code = if is_not_found { StatusCode::NOT_FOUND } else { StatusCode::OK };
-
-            let sorted_flight_protocol = sort_flight_protocol(&rsc_flight_protocol);
-
-            let final_payload = if sorted_flight_protocol.ends_with('\n') {
-                sorted_flight_protocol
-            } else {
-                format!("{sorted_flight_protocol}\n")
-            };
-
-            let mut response_builder = Response::builder()
-                .status(status_code)
-                .header("content-type", "text/x-component")
-                .header("vary", "Accept");
-
-            if let Some(ref metadata) = context.metadata
-                && let Ok(metadata_json) = serde_json::to_string(metadata)
-            {
-                let encoded_metadata = urlencoding::encode(&metadata_json);
-                response_builder =
-                    response_builder.header("x-rari-metadata", encoded_metadata.as_ref());
-            }
-
-            #[expect(
-                clippy::expect_used,
-                reason = "Response::builder() with valid components never fails"
-            )]
-            Ok(response_builder.body(Body::from(final_payload)).expect("Valid RSC response"))
-        }
-        RenderResult::StaticBinary(binary_payload) => {
-            let status_code = if is_not_found { StatusCode::NOT_FOUND } else { StatusCode::OK };
-
-            let mut response_builder = Response::builder()
-                .status(status_code)
-                .header("content-type", "text/x-component")
-                .header("vary", "Accept");
-
-            if let Some(ref metadata) = context.metadata
-                && let Ok(metadata_json) = serde_json::to_string(metadata)
-            {
-                let encoded_metadata = urlencoding::encode(&metadata_json);
-                response_builder =
-                    response_builder.header("x-rari-metadata", encoded_metadata.as_ref());
-            }
-
-            #[expect(
-                clippy::expect_used,
-                reason = "Response::builder() with valid components never fails"
-            )]
-            Ok(response_builder.body(Body::from(binary_payload)).expect("Valid RSC response"))
-        }
-    }
-}
-
-#[expect(clippy::too_many_arguments)]
 fn render_chunked_response(
     state: &Arc<ServerState>,
     context: &LayoutRenderContext,
-    content_type: ChunkedContentType,
     shell: Bytes,
     closing: Bytes,
     mut chunks: Receiver<Result<Vec<u8>, RariError>>,
     is_not_found: bool,
-    accept_encoding: Option<&str>,
 ) -> http::Response<Body> {
     let stall_timeout = Duration::from_millis(chunked_stream_stall_timeout_ms());
 
     let byte_stream = async_stream::stream! {
-        match content_type {
-            ChunkedContentType::Html => {
-                // After Suspense starts resolving, a large HTML chunk is often
-                // followed within ~1ms by the final flight/complete tail on the
-                // isolate thread. Wait only after large chunks so we don't tax
-                // every small endgame write.
-                const ENDGAME_AFTER: Duration = Duration::from_millis(800);
-                const ENDGAME_WAIT: Duration = Duration::from_micros(500);
-                const ENDGAME_LARGE_MIN: usize = 1024;
+        // After Suspense starts resolving, a large HTML chunk is often
+        // followed within ~1ms by the final flight/complete tail on the
+        // isolate thread. Wait only after large chunks so we don't tax
+        // every small endgame write.
+        const ENDGAME_AFTER: Duration = Duration::from_millis(800);
+        const ENDGAME_WAIT: Duration = Duration::from_micros(500);
+        const ENDGAME_LARGE_MIN: usize = 1024;
 
-                let t0 = Instant::now();
-                let mut finished = false;
+        let t0 = Instant::now();
+        let mut finished = false;
 
-                yield Ok::<_, Error>(shell);
+        yield Ok::<_, Error>(shell);
 
-                while !finished {
-                    match time::timeout(stall_timeout, chunks.recv()).await {
-                        Ok(Some(Ok(chunk_bytes))) => {
-                            if chunk_bytes.is_empty() {
-                                continue;
-                            }
-                            let mut buf = chunk_bytes;
-                            let mut stream_error: Option<RariError> = None;
+        while !finished {
+            match time::timeout(stall_timeout, chunks.recv()).await {
+                Ok(Some(Ok(chunk_bytes))) => {
+                    if chunk_bytes.is_empty() {
+                        continue;
+                    }
+                    let mut buf = chunk_bytes;
+                    let mut stream_error: Option<RariError> = None;
 
-                            loop {
-                                match chunks.try_recv() {
-                                    Ok(Ok(more)) => {
-                                        if !more.is_empty() {
-                                            buf.extend_from_slice(&more);
-                                        }
-                                    }
-                                    Ok(Err(e)) => {
-                                        stream_error = Some(e);
-                                        finished = true;
-                                        break;
-                                    }
-                                    Err(TryRecvError::Empty) => break,
-                                    Err(TryRecvError::Disconnected) => {
-                                        finished = true;
-                                        break;
-                                    }
+                    loop {
+                        match chunks.try_recv() {
+                            Ok(Ok(more)) => {
+                                if !more.is_empty() {
+                                    buf.extend_from_slice(&more);
                                 }
                             }
+                            Ok(Err(e)) => {
+                                stream_error = Some(e);
+                                finished = true;
+                                break;
+                            }
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => {
+                                finished = true;
+                                break;
+                            }
+                        }
+                    }
 
-                            if !finished
-                                && stream_error.is_none()
-                                && t0.elapsed() >= ENDGAME_AFTER
-                                && buf.len() >= ENDGAME_LARGE_MIN
-                            {
-                                match time::timeout(ENDGAME_WAIT, chunks.recv()).await {
-                                    Ok(Some(Ok(more))) => {
-                                        if !more.is_empty() {
-                                            buf.extend_from_slice(&more);
-                                        }
-                                        loop {
-                                            match chunks.try_recv() {
-                                                Ok(Ok(more)) => {
-                                                    if !more.is_empty() {
-                                                        buf.extend_from_slice(&more);
-                                                    }
-                                                }
-                                                Ok(Err(e)) => {
-                                                    stream_error = Some(e);
-                                                    finished = true;
-                                                    break;
-                                                }
-                                                Err(TryRecvError::Empty) => break,
-                                                Err(TryRecvError::Disconnected) => {
-                                                    finished = true;
-                                                    break;
-                                                }
+                    if !finished
+                        && stream_error.is_none()
+                        && t0.elapsed() >= ENDGAME_AFTER
+                        && buf.len() >= ENDGAME_LARGE_MIN
+                    {
+                        match time::timeout(ENDGAME_WAIT, chunks.recv()).await {
+                            Ok(Some(Ok(more))) => {
+                                if !more.is_empty() {
+                                    buf.extend_from_slice(&more);
+                                }
+                                loop {
+                                    match chunks.try_recv() {
+                                        Ok(Ok(more)) => {
+                                            if !more.is_empty() {
+                                                buf.extend_from_slice(&more);
                                             }
                                         }
+                                        Ok(Err(e)) => {
+                                            stream_error = Some(e);
+                                            finished = true;
+                                            break;
+                                        }
+                                        Err(TryRecvError::Empty) => break,
+                                        Err(TryRecvError::Disconnected) => {
+                                            finished = true;
+                                            break;
+                                        }
                                     }
-                                    Ok(Some(Err(e))) => {
-                                        stream_error = Some(e);
-                                        finished = true;
-                                    }
-                                    Ok(None) => {
-                                        finished = true;
-                                    }
-                                    Err(_) => {}
                                 }
                             }
-
-                            yield Ok(Bytes::from(buf));
-
-                            if let Some(e) = stream_error {
-                                tracing::error!("Error in chunked HTML stream: {}", e);
-                                yield Err(Error::other(e.to_string()));
+                            Ok(Some(Err(e))) => {
+                                stream_error = Some(e);
+                                finished = true;
                             }
-                        }
-                        Ok(Some(Err(e))) => {
-                            tracing::error!("Error in chunked HTML stream: {}", e);
-                            yield Err(Error::other(e.to_string()));
-                            finished = true;
-                        }
-                        Ok(None) => {
-                            finished = true;
-                        }
-                        Err(_) => {
-                            tracing::error!(
-                                "Chunked HTML stream stalled: no chunk received within {} ms",
-                                stall_timeout.as_millis()
-                            );
-                            yield Ok(chunked_stream_error_chunk(
-                                "Stream timed out waiting for content",
-                            ));
-                            finished = true;
+                            Ok(None) => {
+                                finished = true;
+                            }
+                            Err(_) => {}
                         }
                     }
-                }
 
-                if !closing.is_empty() {
-                    yield Ok(closing);
-                }
-            }
-            ChunkedContentType::RscFlight => {
-                loop {
-                    match time::timeout(stall_timeout, chunks.recv()).await {
-                        Ok(Some(Ok(chunk_bytes))) => {
-                            if chunk_bytes.is_empty() {
-                                continue;
-                            }
-                            let data = String::from_utf8_lossy(&chunk_bytes);
-                            if data.trim() == "STREAM_COMPLETE" {
-                                continue;
-                            }
-                            yield Ok(Bytes::from(chunk_bytes));
-                        }
-                        Ok(Some(Err(e))) => {
-                            tracing::error!("Error in chunked RSC stream: {}", e);
-                            yield Err(Error::other(e.to_string()));
-                            break;
-                        }
-                        Ok(None) => break,
-                        Err(_) => {
-                            tracing::error!(
-                                "Chunked RSC stream stalled: no chunk received within {} ms",
-                                stall_timeout.as_millis()
-                            );
-                            yield Err(Error::other("RSC stream timed out waiting for content"));
-                            break;
-                        }
+                    yield Ok(Bytes::from(buf));
+
+                    if let Some(e) = stream_error {
+                        tracing::error!("Error in chunked HTML stream: {}", e);
+                        yield Err(Error::other(e.to_string()));
                     }
+                }
+                Ok(Some(Err(e))) => {
+                    tracing::error!("Error in chunked HTML stream: {}", e);
+                    yield Err(Error::other(e.to_string()));
+                    finished = true;
+                }
+                Ok(None) => {
+                    finished = true;
+                }
+                Err(_) => {
+                    tracing::error!(
+                        "Chunked HTML stream stalled: no chunk received within {} ms",
+                        stall_timeout.as_millis()
+                    );
+                    yield Ok(chunked_stream_error_chunk(
+                        "Stream timed out waiting for content",
+                    ));
+                    finished = true;
                 }
             }
         }
+
+        if !closing.is_empty() {
+            yield Ok(closing);
+        }
     };
 
-    let encoding = match content_type {
-        // Prefer identity for streaming HTML so compressor setup does not delay the shell.
-        ChunkedContentType::Html => CompressionEncoding::Identity,
-        ChunkedContentType::RscFlight => CompressionEncoding::from_accept_encoding(accept_encoding),
-    };
+    // Prefer identity for streaming HTML so compressor setup does not delay the shell.
+    let encoding = CompressionEncoding::Identity;
     let compressed_stream = compress_stream(byte_stream, encoding);
     let vary =
         if encoding.as_header_value().is_some() { "Accept, Accept-Encoding" } else { "Accept" };
@@ -726,22 +550,7 @@ fn render_chunked_response(
         .header("vary", vary)
         .header("x-content-type-options", "nosniff");
 
-    match content_type {
-        ChunkedContentType::Html => {
-            response_builder = response_builder.header("content-type", "text/html; charset=utf-8");
-        }
-        ChunkedContentType::RscFlight => {
-            response_builder = response_builder.header("content-type", "text/x-component");
-
-            if let Some(ref metadata) = context.metadata
-                && let Ok(metadata_json) = serde_json::to_string(metadata)
-            {
-                let encoded_metadata = urlencoding::encode(&metadata_json);
-                response_builder =
-                    response_builder.header("x-rari-metadata", encoded_metadata.as_ref());
-            }
-        }
-    }
+    response_builder = response_builder.header("content-type", "text/html; charset=utf-8");
 
     if let Some(encoding_header) = encoding.as_header_value() {
         response_builder = response_builder.header("content-encoding", encoding_header);
@@ -774,7 +583,7 @@ pub async fn render_synchronous(
     state: Arc<ServerState>,
     route_match: AppRouteMatch,
     context: LayoutRenderContext,
-    accept_encoding: Option<&str>,
+    _accept_encoding: Option<&str>,
 ) -> Result<Response, StatusCode> {
     let layout_renderer = LayoutRenderer::with_shared_cache(
         Arc::clone(&state.renderer),
@@ -788,7 +597,7 @@ pub async fn render_synchronous(
     let is_not_found = route_match.not_found.is_some();
 
     match layout_renderer
-        .render_route_with_streaming(&route_match, &context, Some(request_context), false, None)
+        .render_route_with_streaming(&route_match, &context, Some(request_context), None)
         .await
     {
         Ok(render_result) => match render_result {
@@ -820,40 +629,8 @@ pub async fn render_synchronous(
                     .body(Body::from(final_html))
                     .expect("Valid HTML response"))
             }
-            RenderResult::Chunked {
-                content_type: ChunkedContentType::Html,
-                shell,
-                closing,
-                chunks,
-            } => Ok(render_chunked_response(
-                &state,
-                &context,
-                ChunkedContentType::Html,
-                shell,
-                closing,
-                chunks,
-                is_not_found,
-                accept_encoding,
-            )),
-            RenderResult::StaticBinary(bytes) => {
-                let html_content = String::from_utf8_lossy(&bytes).into_owned();
-                let status_code = if is_not_found { StatusCode::NOT_FOUND } else { StatusCode::OK };
-                #[expect(
-                    clippy::expect_used,
-                    reason = "Response::builder() with valid components never fails"
-                )]
-                Ok(Response::builder()
-                    .status(status_code)
-                    .header("content-type", "text/html; charset=utf-8")
-                    .header("vary", "Accept")
-                    .body(Body::from(html_content))
-                    .expect("Valid response"))
-            }
-            RenderResult::Chunked { content_type: ChunkedContentType::RscFlight, .. } => {
-                tracing::error!("RSC chunked render not supported in HTML synchronous mode");
-                Err(error_response::status(&RariError::internal(
-                    "RSC chunked render not supported in HTML synchronous mode",
-                )))
+            RenderResult::Chunked { shell, closing, chunks } => {
+                Ok(render_chunked_response(&state, &context, shell, closing, chunks, is_not_found))
             }
         },
         Err(e) => {
@@ -879,7 +656,7 @@ pub async fn render_streaming_with_layout(
     );
 
     let render_result = match layout_renderer
-        .render_route_with_streaming(&route_match, &context, Some(request_context), false, None)
+        .render_route_with_streaming(&route_match, &context, Some(request_context), None)
         .await
     {
         Ok(result) => result,
@@ -910,21 +687,9 @@ pub async fn render_streaming_with_layout(
     };
 
     match render_result {
-        RenderResult::Chunked {
-            content_type: ChunkedContentType::Html,
-            shell,
-            closing,
-            chunks,
-        } => Ok(render_chunked_response(
-            &state,
-            &context,
-            ChunkedContentType::Html,
-            shell,
-            closing,
-            chunks,
-            is_not_found,
-            accept_encoding,
-        )),
+        RenderResult::Chunked { shell, closing, chunks } => {
+            Ok(render_chunked_response(&state, &context, shell, closing, chunks, is_not_found))
+        }
         RenderResult::Static(html) => {
             use crate::server::compression::compress_body;
 
@@ -961,15 +726,6 @@ pub async fn render_streaming_with_layout(
                 reason = "Response::builder() with valid components never fails"
             )]
             Ok(response_builder.body(Body::from(body_bytes)).expect("Valid HTML response"))
-        }
-        RenderResult::StaticBinary(_) => Err(error_response::status(&RariError::internal(
-            "Binary render result not supported in HTML streaming mode",
-        ))),
-        RenderResult::Chunked { content_type: ChunkedContentType::RscFlight, .. } => {
-            tracing::error!("RSC chunked render not supported in HTML streaming mode");
-            Err(error_response::status(&RariError::internal(
-                "RSC chunked render not supported in HTML streaming mode",
-            )))
         }
     }
 }
@@ -1150,21 +906,13 @@ pub async fn handle_app_route(
             ))),
     );
 
-    // Solid apps never send `Accept: text/x-component` (their client entry has no
-    // Flight router); serve HTML regardless so a stray header can't hit the React-only
-    // RSC navigation path.
-    let render_mode = if state.config.framework == Framework::Solid {
-        RenderMode::Ssr
-    } else {
-        RequestTypeDetector::detect_render_mode(&headers)
-    };
     let accept_encoding = headers.get("accept-encoding").and_then(|v| v.to_str().ok());
 
     let cookie_header = request_cookie_header(&headers);
     let query_params_for_cache = route_query_params_for_cache(&query_params);
     let query_params_ref = query_params_for_cache.as_ref();
 
-    if matches!(render_mode, RenderMode::Ssr) && can_use_static_fast_cache(cookie_header) {
+    if can_use_static_fast_cache(cookie_header) {
         let fast_key =
             response::ResponseCache::generate_static_fast_cache_key(path, query_params_ref, None);
 
@@ -1238,41 +986,205 @@ pub async fn handle_app_route(
         }
     }
 
-    match render_mode {
-        RenderMode::RscNavigation => {
-            let use_streaming = should_use_streaming(&route_match, &state.config);
+    let cache_key = response_cache_key(path, query_params_ref, None, cookie_header);
 
-            if use_streaming {
-                context.metadata = collect_page_metadata(&state, &route_match, &context).await;
+    let client_etag = headers.get("if-none-match").and_then(|v| v.to_str().ok());
 
-                return render_rsc_navigation_streaming(
-                    Arc::new(state),
-                    route_match,
-                    context,
-                    accept_encoding,
-                )
-                .await;
-            }
-            let cache_key = response_cache_key(path, query_params_ref, Some("rsc"), cookie_header);
+    if let Some(cached) = state.response_cache.get(&cache_key).await {
+        if let (Some(cached_etag), Some(client_etag)) = (&cached.metadata.etag, client_etag)
+            && cached_etag == client_etag
+        {
+            let merged_vary = merge_vary_with_accept(cached.headers.get("vary"));
 
-            if context.template_navigation_id.is_none()
-                && let Some(cached) = state.response_cache.get(&cache_key).await
+            #[expect(
+                clippy::expect_used,
+                reason = "Response::builder() with valid components never fails"
+            )]
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .header("etag", cached_etag)
+                .header("vary", merged_vary)
+                .body(Body::empty())
+                .expect("Valid 304 response"));
+        }
+
+        let status_code =
+            if route_match.not_found.is_some() { StatusCode::NOT_FOUND } else { StatusCode::OK };
+
+        let merged_vary = merge_vary_with_accept(cached.headers.get("vary"));
+
+        let encoding = CompressionEncoding::from_accept_encoding(accept_encoding);
+
+        let (body_bytes, actual_encoding) =
+            if let Some(pre_compressed) = cached.get_compressed(&encoding) {
+                (pre_compressed.clone(), encoding)
+            } else if matches!(encoding, CompressionEncoding::Identity) {
+                (cached.body.clone(), CompressionEncoding::Identity)
+            } else {
+                let (compressed, actual_enc) = compress_body(cached.body.clone(), encoding).await;
+                if !matches!(actual_enc, CompressionEncoding::Identity) {
+                    let mut updated = cached.clone();
+                    match actual_enc {
+                        CompressionEncoding::Zstd => {
+                            updated.compressed_zstd = Some(compressed.clone());
+                        }
+                        CompressionEncoding::Brotli => {
+                            updated.compressed_br = Some(compressed.clone());
+                        }
+                        CompressionEncoding::Gzip => {
+                            updated.compressed_gzip = Some(compressed.clone());
+                        }
+                        CompressionEncoding::Identity => {}
+                    }
+                    state.response_cache.update_in_place(&cache_key, updated).await;
+                }
+                (compressed, actual_enc)
+            };
+
+        let mut response_builder = Response::builder()
+            .status(status_code)
+            .header("content-type", "text/html; charset=utf-8")
+            .header("vary", merged_vary)
+            .header("x-cache", "HIT");
+
+        if let Some(encoding_header) = actual_encoding.as_header_value() {
+            response_builder = response_builder.header("content-encoding", encoding_header);
+        }
+
+        if let Some(etag) = &cached.metadata.etag {
+            response_builder = response_builder.header("etag", etag);
+        }
+
+        for (key, value) in &cached.headers {
+            if key.as_str() != "vary"
+                && key.as_str() != "content-encoding"
+                && key.as_str() != "content-length"
+                && key.as_str() != "content-type"
+                && key.as_str() != "etag"
             {
-                let status_code = if route_match.not_found.is_some() {
-                    StatusCode::NOT_FOUND
-                } else {
-                    StatusCode::OK
+                response_builder = response_builder.header(key, value);
+            }
+        }
+
+        #[expect(
+            clippy::expect_used,
+            reason = "Response::builder() with valid components never fails"
+        )]
+        return Ok(response_builder.body(Body::from(body_bytes)).expect("Valid cached response"));
+    }
+
+    let use_streaming = should_use_streaming(&route_match, &state.config);
+
+    if use_streaming {
+        let mut context = context.clone();
+        let metadata = collect_page_metadata(&state, &route_match, &context).await;
+        apply_page_metadata(&mut context, metadata);
+        let response = render_with_fallback(
+            Arc::new(state.clone()),
+            route_match.clone(),
+            context,
+            accept_encoding,
+        )
+        .await?;
+
+        if (response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND)
+            && let Some(render_mode) = response.headers().get("x-render-mode")
+            && render_mode == "static"
+        {
+            let (parts, body) = response.into_parts();
+            let body_bytes = body::to_bytes(body, usize::MAX).await.map_err(|e| {
+                tracing::error!("Failed to read response body for cache: {}", e);
+                error_response::status(&RariError::internal(format!(
+                    "Failed to read response body for cache: {e}"
+                )))
+            })?;
+
+            let cache_control_value =
+                parts.headers.get("cache-control").and_then(|v| v.to_str().ok());
+
+            let cache_policy = if let Some(cc) = cache_control_value {
+                response::RouteCachePolicy::from_cache_control(cc, path)
+            } else {
+                let mut policy = response::RouteCachePolicy {
+                    ttl: state.response_cache.config.default_ttl,
+                    ..Default::default()
+                };
+                policy.tags.push(path.to_string());
+                policy
+            };
+
+            if should_store_response_cache(&state, &cache_policy).await {
+                let response_encoding = parts
+                    .headers
+                    .get("content-encoding")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|enc| match enc {
+                        "gzip" => CompressionEncoding::Gzip,
+                        "br" => CompressionEncoding::Brotli,
+                        "zstd" => CompressionEncoding::Zstd,
+                        _ => CompressionEncoding::Identity,
+                    })
+                    .unwrap_or(CompressionEncoding::Identity);
+
+                let (raw_body, compressed_gzip, compressed_br, compressed_zstd) =
+                    if matches!(response_encoding, CompressionEncoding::Identity) {
+                        (body_bytes.clone(), None, None, None)
+                    } else {
+                        let decompressed = decompress_bytes(&body_bytes, response_encoding).await;
+                        match decompressed {
+                            Ok(raw) => {
+                                let compressed_variant = body_bytes.clone();
+                                let (gzip, br, zstd) = match response_encoding {
+                                    CompressionEncoding::Gzip => {
+                                        (Some(compressed_variant), None, None)
+                                    }
+                                    CompressionEncoding::Brotli => {
+                                        (None, Some(compressed_variant), None)
+                                    }
+                                    CompressionEncoding::Zstd => {
+                                        (None, None, Some(compressed_variant))
+                                    }
+                                    CompressionEncoding::Identity => (None, None, None),
+                                };
+                                (raw, gzip, br, zstd)
+                            }
+                            Err(_) => (body_bytes.clone(), None, None, None),
+                        }
+                    };
+
+                let etag = response::ResponseCache::generate_etag(&raw_body);
+                let mut response_headers = HeaderMap::new();
+                for (key, value) in &parts.headers {
+                    if key.as_str() != "content-encoding" && key.as_str() != "content-length" {
+                        response_headers.insert(key.clone(), value.clone());
+                    }
+                }
+                insert_response_cache_vary_header(&mut response_headers, cookie_header, true);
+
+                let merged_tags =
+                    merge_response_cache_tags(&state, cache_policy.tags.clone()).await;
+
+                let cached_response = response::CachedResponse {
+                    body: raw_body,
+                    headers: response_headers,
+                    metadata: response::CacheMetadata {
+                        cached_at: Instant::now(),
+                        ttl: cache_policy.ttl,
+                        etag: Some(etag.clone()),
+                        tags: merged_tags,
+                    },
+                    compressed_zstd,
+                    compressed_br,
+                    compressed_gzip,
                 };
 
-                let merged_vary = merge_vary_with_accept(cached.headers.get("vary"));
+                state.response_cache.set(cache_key.clone(), cached_response).await;
 
-                let mut response_builder = Response::builder()
-                    .status(status_code)
-                    .header("content-type", "text/x-component")
-                    .header("vary", merged_vary)
-                    .header("x-cache", "HIT");
+                let merged_vary = static_html_vary_header(cookie_header);
 
-                for (key, value) in &cached.headers {
+                let mut response_builder = Response::builder().status(parts.status);
+
+                for (key, value) in &parts.headers {
                     if key.as_str() != "vary" {
                         response_builder = response_builder.header(key, value);
                     }
@@ -1283,503 +1195,167 @@ pub async fn handle_app_route(
                     reason = "Response::builder() with valid components never fails"
                 )]
                 return Ok(response_builder
-                    .body(Body::from(cached.body))
-                    .expect("Valid cached RSC response"));
-            }
-
-            let metadata_rx =
-                spawn_page_metadata(state.clone(), route_match.clone(), context.clone());
-
-            match layout_renderer
-                .render_route_by_mode(&route_match, &context, Some(Arc::clone(&request_context)))
-                .await
-            {
-                Ok(rsc_flight_protocol) => {
-                    context.metadata = metadata_rx.await.ok().flatten();
-
-                    let status_code = if route_match.not_found.is_some() {
-                        StatusCode::NOT_FOUND
-                    } else {
-                        StatusCode::OK
-                    };
-
-                    let mut response_builder = Response::builder()
-                        .status(status_code)
-                        .header("content-type", "text/x-component")
-                        .header("vary", rsc_vary_header(cookie_header))
-                        .header("x-cache", "MISS");
-
-                    let mut cache_headers = HeaderMap::new();
-
-                    if let Some(ref metadata) = context.metadata
-                        && let Ok(metadata_json) = serde_json::to_string(metadata)
-                    {
-                        let encoded_metadata = urlencoding::encode(&metadata_json);
-                        response_builder =
-                            response_builder.header("x-rari-metadata", encoded_metadata.as_ref());
-                        if let Ok(header_value) = encoded_metadata.as_ref().parse() {
-                            cache_headers.insert("x-rari-metadata", header_value);
-                        }
-                    }
-
-                    let cache_control = state.config.get_cache_control_for_route(path);
-                    let cache_policy =
-                        response::RouteCachePolicy::from_cache_control(cache_control, path);
-
-                    if should_store_response_cache(&state, &cache_policy).await {
-                        let response_cache_tags =
-                            merge_response_cache_tags(&state, cache_policy.tags.clone()).await;
-                        if cookie_header.is_some() {
-                            insert_response_cache_vary_header(
-                                &mut cache_headers,
-                                cookie_header,
-                                false,
-                            );
-                        }
-                        let cached_response = response::CachedResponse {
-                            body: Bytes::from(rsc_flight_protocol.clone()),
-                            headers: cache_headers,
-                            metadata: response::CacheMetadata {
-                                cached_at: Instant::now(),
-                                ttl: cache_policy.ttl,
-                                etag: None,
-                                tags: response_cache_tags,
-                            },
-                            compressed_zstd: None,
-                            compressed_br: None,
-                            compressed_gzip: None,
-                        };
-
-                        state.response_cache.set(cache_key, cached_response).await;
-                    }
-
-                    #[expect(
-                        clippy::expect_used,
-                        reason = "Response::builder() with valid components never fails"
-                    )]
-                    Ok(response_builder
-                        .body(Body::from(rsc_flight_protocol))
-                        .expect("Valid RSC response"))
-                }
-                Err(e) => {
-                    tracing::error!("Failed to render RSC: {}", e);
-                    Err(error_response::status(&e))
-                }
-            }
-        }
-        RenderMode::Ssr => {
-            let cache_key = response_cache_key(path, query_params_ref, None, cookie_header);
-
-            let client_etag = headers.get("if-none-match").and_then(|v| v.to_str().ok());
-
-            if let Some(cached) = state.response_cache.get(&cache_key).await {
-                if let (Some(cached_etag), Some(client_etag)) = (&cached.metadata.etag, client_etag)
-                    && cached_etag == client_etag
-                {
-                    let merged_vary = merge_vary_with_accept(cached.headers.get("vary"));
-
-                    #[expect(
-                        clippy::expect_used,
-                        reason = "Response::builder() with valid components never fails"
-                    )]
-                    return Ok(Response::builder()
-                        .status(StatusCode::NOT_MODIFIED)
-                        .header("etag", cached_etag)
-                        .header("vary", merged_vary)
-                        .body(Body::empty())
-                        .expect("Valid 304 response"));
-                }
-
-                let status_code = if route_match.not_found.is_some() {
-                    StatusCode::NOT_FOUND
-                } else {
-                    StatusCode::OK
-                };
-
-                let merged_vary = merge_vary_with_accept(cached.headers.get("vary"));
-
-                let encoding = CompressionEncoding::from_accept_encoding(accept_encoding);
-
-                let (body_bytes, actual_encoding) =
-                    if let Some(pre_compressed) = cached.get_compressed(&encoding) {
-                        (pre_compressed.clone(), encoding)
-                    } else if matches!(encoding, CompressionEncoding::Identity) {
-                        (cached.body.clone(), CompressionEncoding::Identity)
-                    } else {
-                        let (compressed, actual_enc) =
-                            compress_body(cached.body.clone(), encoding).await;
-                        if !matches!(actual_enc, CompressionEncoding::Identity) {
-                            let mut updated = cached.clone();
-                            match actual_enc {
-                                CompressionEncoding::Zstd => {
-                                    updated.compressed_zstd = Some(compressed.clone());
-                                }
-                                CompressionEncoding::Brotli => {
-                                    updated.compressed_br = Some(compressed.clone());
-                                }
-                                CompressionEncoding::Gzip => {
-                                    updated.compressed_gzip = Some(compressed.clone());
-                                }
-                                CompressionEncoding::Identity => {}
-                            }
-                            state.response_cache.update_in_place(&cache_key, updated).await;
-                        }
-                        (compressed, actual_enc)
-                    };
-
-                let mut response_builder = Response::builder()
-                    .status(status_code)
-                    .header("content-type", "text/html; charset=utf-8")
+                    .header("etag", etag)
                     .header("vary", merged_vary)
-                    .header("x-cache", "HIT");
-
-                if let Some(encoding_header) = actual_encoding.as_header_value() {
-                    response_builder = response_builder.header("content-encoding", encoding_header);
-                }
-
-                if let Some(etag) = &cached.metadata.etag {
-                    response_builder = response_builder.header("etag", etag);
-                }
-
-                for (key, value) in &cached.headers {
-                    if key.as_str() != "vary"
-                        && key.as_str() != "content-encoding"
-                        && key.as_str() != "content-length"
-                        && key.as_str() != "content-type"
-                        && key.as_str() != "etag"
-                    {
-                        response_builder = response_builder.header(key, value);
-                    }
-                }
-
-                #[expect(
-                    clippy::expect_used,
-                    reason = "Response::builder() with valid components never fails"
-                )]
-                return Ok(response_builder
+                    .header("x-cache", "MISS")
                     .body(Body::from(body_bytes))
-                    .expect("Valid cached response"));
+                    .expect("Valid response"));
             }
 
-            let use_streaming = should_use_streaming(&route_match, &state.config);
-
-            if use_streaming {
-                let mut context = context.clone();
-                let metadata = collect_page_metadata(&state, &route_match, &context).await;
-                apply_page_metadata(&mut context, metadata);
-                let response = render_with_fallback(
-                    Arc::new(state.clone()),
-                    route_match.clone(),
-                    context,
-                    accept_encoding,
-                )
-                .await?;
-
-                if (response.status() == StatusCode::OK
-                    || response.status() == StatusCode::NOT_FOUND)
-                    && let Some(render_mode) = response.headers().get("x-render-mode")
-                    && render_mode == "static"
-                {
-                    let (parts, body) = response.into_parts();
-                    let body_bytes = body::to_bytes(body, usize::MAX).await.map_err(|e| {
-                        tracing::error!("Failed to read response body for cache: {}", e);
-                        error_response::status(&RariError::internal(format!(
-                            "Failed to read response body for cache: {e}"
-                        )))
-                    })?;
-
-                    let cache_control_value =
-                        parts.headers.get("cache-control").and_then(|v| v.to_str().ok());
-
-                    let cache_policy = if let Some(cc) = cache_control_value {
-                        response::RouteCachePolicy::from_cache_control(cc, path)
-                    } else {
-                        let mut policy = response::RouteCachePolicy {
-                            ttl: state.response_cache.config.default_ttl,
-                            ..Default::default()
-                        };
-                        policy.tags.push(path.to_string());
-                        policy
-                    };
-
-                    if should_store_response_cache(&state, &cache_policy).await {
-                        let response_encoding = parts
-                            .headers
-                            .get("content-encoding")
-                            .and_then(|v| v.to_str().ok())
-                            .map(|enc| match enc {
-                                "gzip" => CompressionEncoding::Gzip,
-                                "br" => CompressionEncoding::Brotli,
-                                "zstd" => CompressionEncoding::Zstd,
-                                _ => CompressionEncoding::Identity,
-                            })
-                            .unwrap_or(CompressionEncoding::Identity);
-
-                        let (raw_body, compressed_gzip, compressed_br, compressed_zstd) =
-                            if matches!(response_encoding, CompressionEncoding::Identity) {
-                                (body_bytes.clone(), None, None, None)
-                            } else {
-                                let decompressed =
-                                    decompress_bytes(&body_bytes, response_encoding).await;
-                                match decompressed {
-                                    Ok(raw) => {
-                                        let compressed_variant = body_bytes.clone();
-                                        let (gzip, br, zstd) = match response_encoding {
-                                            CompressionEncoding::Gzip => {
-                                                (Some(compressed_variant), None, None)
-                                            }
-                                            CompressionEncoding::Brotli => {
-                                                (None, Some(compressed_variant), None)
-                                            }
-                                            CompressionEncoding::Zstd => {
-                                                (None, None, Some(compressed_variant))
-                                            }
-                                            CompressionEncoding::Identity => (None, None, None),
-                                        };
-                                        (raw, gzip, br, zstd)
-                                    }
-                                    Err(_) => (body_bytes.clone(), None, None, None),
-                                }
-                            };
-
-                        let etag = response::ResponseCache::generate_etag(&raw_body);
-                        let mut response_headers = HeaderMap::new();
-                        for (key, value) in &parts.headers {
-                            if key.as_str() != "content-encoding"
-                                && key.as_str() != "content-length"
-                            {
-                                response_headers.insert(key.clone(), value.clone());
-                            }
-                        }
-                        insert_response_cache_vary_header(
-                            &mut response_headers,
-                            cookie_header,
-                            true,
-                        );
-
-                        let merged_tags =
-                            merge_response_cache_tags(&state, cache_policy.tags.clone()).await;
-
-                        let cached_response = response::CachedResponse {
-                            body: raw_body,
-                            headers: response_headers,
-                            metadata: response::CacheMetadata {
-                                cached_at: Instant::now(),
-                                ttl: cache_policy.ttl,
-                                etag: Some(etag.clone()),
-                                tags: merged_tags,
-                            },
-                            compressed_zstd,
-                            compressed_br,
-                            compressed_gzip,
-                        };
-
-                        state.response_cache.set(cache_key.clone(), cached_response).await;
-
-                        let merged_vary = static_html_vary_header(cookie_header);
-
-                        let mut response_builder = Response::builder().status(parts.status);
-
-                        for (key, value) in &parts.headers {
-                            if key.as_str() != "vary" {
-                                response_builder = response_builder.header(key, value);
-                            }
-                        }
-
-                        #[expect(
-                            clippy::expect_used,
-                            reason = "Response::builder() with valid components never fails"
-                        )]
-                        return Ok(response_builder
-                            .header("etag", etag)
-                            .header("vary", merged_vary)
-                            .header("x-cache", "MISS")
-                            .body(Body::from(body_bytes))
-                            .expect("Valid response"));
-                    }
-
-                    return Ok(Response::from_parts(parts, Body::from(body_bytes)));
-                }
-
-                return Ok(response);
-            }
-
-            let metadata = collect_page_metadata(&state, &route_match, &context).await;
-            context.metadata = metadata;
-
-            let render_result = match layout_renderer
-                .render_route_with_streaming(
-                    &route_match,
-                    &context,
-                    Some(Arc::clone(&request_context)),
-                    false,
-                    None,
-                )
-                .await
-            {
-                Ok(result) => result,
-                Err(e) => {
-                    tracing::error!("Direct HTML rendering failed: {}, falling back to shell", e);
-                    return render_fallback_html(&state, route_match.not_found.is_some()).await;
-                }
-            };
-
-            let cache_control_value = state.config.get_cache_control_for_route(path);
-            let cache_policy =
-                response::RouteCachePolicy::from_cache_control(cache_control_value, path);
-            let for_response_cache = should_store_response_cache(&state, &cache_policy).await;
-
-            let (final_html, etag) = match render_result {
-                RenderResult::Static(html_content) => {
-                    let html_with_assets =
-                        match inject_assets_into_html(&html_content, &state.config).await {
-                            Ok(html) => html,
-                            Err(e) => {
-                                tracing::error!("Failed to inject assets into HTML: {}", e);
-                                html_content
-                            }
-                        };
-
-                    let final_html = wrap_html_with_metadata(html_with_assets, &state);
-
-                    let etag = response::ResponseCache::generate_etag(final_html.as_bytes());
-
-                    (final_html, etag)
-                }
-                RenderResult::Chunked {
-                    content_type: ChunkedContentType::Html,
-                    shell,
-                    closing,
-                    mut chunks,
-                } => {
-                    let html = match drain_chunked_stream(shell, closing, &mut chunks).await {
-                        Ok(html) => html,
-                        Err(error) => {
-                            tracing::error!(
-                                "Failed to drain chunked HTML stream for build cache: {error}"
-                            );
-                            return render_fallback_html(&state, route_match.not_found.is_some())
-                                .await;
-                        }
-                    };
-                    let final_html = wrap_html_with_metadata(html, &state);
-                    let etag = response::ResponseCache::generate_etag(final_html.as_bytes());
-                    (final_html, etag)
-                }
-                RenderResult::StaticBinary(_bytes) => {
-                    tracing::error!("StaticBinary not supported in build mode");
-                    return render_fallback_html(&state, route_match.not_found.is_some()).await;
-                }
-                RenderResult::Chunked { content_type: ChunkedContentType::RscFlight, .. } => {
-                    tracing::error!(
-                        "RSC chunked render not supported in build mode HTML rendering"
-                    );
-                    return render_fallback_html(&state, route_match.not_found.is_some()).await;
-                }
-            };
-
-            let status_code = if route_match.not_found.is_some() {
-                StatusCode::NOT_FOUND
-            } else {
-                StatusCode::OK
-            };
-
-            let mut response_builder = Response::builder()
-                .status(status_code)
-                .header("content-type", "text/html; charset=utf-8")
-                .header("etag", &etag)
-                .header("vary", static_html_vary_header(cookie_header))
-                .header("x-cache", "MISS");
-
-            let mut response_headers = HeaderMap::new();
-
-            response_builder = response_builder.header("cache-control", cache_control_value);
-            if let Ok(header_value) = HeaderValue::from_str(cache_control_value) {
-                response_headers.insert(CACHE_CONTROL, header_value);
-            }
-            insert_response_cache_vary_header(&mut response_headers, cookie_header, true);
-
-            // One refcounted buffer serves the response cache, the fast
-            // cache, and the response body, the page was previously cloned
-            // in full for the cache and again for the body.
-            let final_html = Bytes::from(final_html);
-
-            if for_response_cache {
-                let response_cache_tags =
-                    merge_response_cache_tags(&state, cache_policy.tags.clone()).await;
-                let body_bytes = final_html.clone();
-
-                let (compressed_gzip, compressed_zstd, compressed_br) = {
-                    let (gz, gz_enc) =
-                        compress_body(body_bytes.clone(), CompressionEncoding::Gzip).await;
-                    let (zs, zs_enc) =
-                        compress_body(body_bytes.clone(), CompressionEncoding::Zstd).await;
-                    let (br, br_enc) =
-                        compress_body(body_bytes.clone(), CompressionEncoding::Brotli).await;
-                    (
-                        if matches!(gz_enc, CompressionEncoding::Gzip) { Some(gz) } else { None },
-                        if matches!(zs_enc, CompressionEncoding::Zstd) { Some(zs) } else { None },
-                        if matches!(br_enc, CompressionEncoding::Brotli) { Some(br) } else { None },
-                    )
-                };
-
-                if can_use_static_fast_cache(cookie_header) {
-                    let fast_key = response::ResponseCache::generate_static_fast_cache_key(
-                        path,
-                        query_params_ref,
-                        None,
-                    );
-                    response::insert_static_fast_cache(
-                        &state.static_fast_cache,
-                        &fast_key,
-                        Arc::new(response::PrebuiltResponse {
-                            identity: body_bytes.clone(),
-                            gzip: compressed_gzip.clone(),
-                            br: compressed_br.clone(),
-                            zstd: compressed_zstd.clone(),
-                            etag: etag.clone(),
-                            content_type: "text/html; charset=utf-8".to_string(),
-                            cache_control: cache_control_value.to_string(),
-                            is_not_found: route_match.not_found.is_some(),
-                            cached_at: Instant::now(),
-                        }),
-                        state.response_cache.config.max_entries,
-                    );
-                }
-
-                let cached_response = response::CachedResponse {
-                    body: body_bytes,
-                    headers: response_headers,
-                    metadata: response::CacheMetadata {
-                        cached_at: Instant::now(),
-                        ttl: cache_policy.ttl,
-                        etag: Some(etag.clone()),
-                        tags: response_cache_tags,
-                    },
-                    compressed_zstd,
-                    compressed_br,
-                    compressed_gzip,
-                };
-
-                state.response_cache.set(cache_key, cached_response).await;
-            }
-
-            {
-                use crate::server::compression::{CompressionEncoding, compress_body};
-                let encoding = CompressionEncoding::from_accept_encoding(accept_encoding);
-                let (body_bytes, actual_encoding) = compress_body(final_html, encoding).await;
-
-                if let Some(encoding_header) = actual_encoding.as_header_value() {
-                    response_builder = response_builder.header("content-encoding", encoding_header);
-                }
-
-                #[expect(
-                    clippy::expect_used,
-                    reason = "Response::builder() with valid components never fails"
-                )]
-                Ok(response_builder.body(Body::from(body_bytes)).expect("Valid HTML response"))
-            }
+            return Ok(Response::from_parts(parts, Body::from(body_bytes)));
         }
+
+        return Ok(response);
+    }
+
+    let metadata = collect_page_metadata(&state, &route_match, &context).await;
+    context.metadata = metadata;
+
+    let render_result = match layout_renderer
+        .render_route_with_streaming(
+            &route_match,
+            &context,
+            Some(Arc::clone(&request_context)),
+            None,
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Direct HTML rendering failed: {}, falling back to shell", e);
+            return render_fallback_html(&state, route_match.not_found.is_some()).await;
+        }
+    };
+
+    let cache_control_value = state.config.get_cache_control_for_route(path);
+    let cache_policy = response::RouteCachePolicy::from_cache_control(cache_control_value, path);
+    let for_response_cache = should_store_response_cache(&state, &cache_policy).await;
+
+    let (final_html, etag) = match render_result {
+        RenderResult::Static(html_content) => {
+            let html_with_assets = match inject_assets_into_html(&html_content, &state.config).await
+            {
+                Ok(html) => html,
+                Err(e) => {
+                    tracing::error!("Failed to inject assets into HTML: {}", e);
+                    html_content
+                }
+            };
+
+            let final_html = wrap_html_with_metadata(html_with_assets, &state);
+
+            let etag = response::ResponseCache::generate_etag(final_html.as_bytes());
+
+            (final_html, etag)
+        }
+        RenderResult::Chunked { shell, closing, mut chunks } => {
+            let html = match drain_chunked_stream(shell, closing, &mut chunks).await {
+                Ok(html) => html,
+                Err(error) => {
+                    tracing::error!("Failed to drain chunked HTML stream for build cache: {error}");
+                    return render_fallback_html(&state, route_match.not_found.is_some()).await;
+                }
+            };
+            let final_html = wrap_html_with_metadata(html, &state);
+            let etag = response::ResponseCache::generate_etag(final_html.as_bytes());
+            (final_html, etag)
+        }
+    };
+
+    let status_code =
+        if route_match.not_found.is_some() { StatusCode::NOT_FOUND } else { StatusCode::OK };
+
+    let mut response_builder = Response::builder()
+        .status(status_code)
+        .header("content-type", "text/html; charset=utf-8")
+        .header("etag", &etag)
+        .header("vary", static_html_vary_header(cookie_header))
+        .header("x-cache", "MISS");
+
+    let mut response_headers = HeaderMap::new();
+
+    response_builder = response_builder.header("cache-control", cache_control_value);
+    if let Ok(header_value) = HeaderValue::from_str(cache_control_value) {
+        response_headers.insert(CACHE_CONTROL, header_value);
+    }
+    insert_response_cache_vary_header(&mut response_headers, cookie_header, true);
+
+    // One refcounted buffer serves the response cache, the fast
+    // cache, and the response body, the page was previously cloned
+    // in full for the cache and again for the body.
+    let final_html = Bytes::from(final_html);
+
+    if for_response_cache {
+        let response_cache_tags =
+            merge_response_cache_tags(&state, cache_policy.tags.clone()).await;
+        let body_bytes = final_html.clone();
+
+        let (compressed_gzip, compressed_zstd, compressed_br) = {
+            let (gz, gz_enc) = compress_body(body_bytes.clone(), CompressionEncoding::Gzip).await;
+            let (zs, zs_enc) = compress_body(body_bytes.clone(), CompressionEncoding::Zstd).await;
+            let (br, br_enc) = compress_body(body_bytes.clone(), CompressionEncoding::Brotli).await;
+            (
+                if matches!(gz_enc, CompressionEncoding::Gzip) { Some(gz) } else { None },
+                if matches!(zs_enc, CompressionEncoding::Zstd) { Some(zs) } else { None },
+                if matches!(br_enc, CompressionEncoding::Brotli) { Some(br) } else { None },
+            )
+        };
+
+        if can_use_static_fast_cache(cookie_header) {
+            let fast_key = response::ResponseCache::generate_static_fast_cache_key(
+                path,
+                query_params_ref,
+                None,
+            );
+            response::insert_static_fast_cache(
+                &state.static_fast_cache,
+                &fast_key,
+                Arc::new(response::PrebuiltResponse {
+                    identity: body_bytes.clone(),
+                    gzip: compressed_gzip.clone(),
+                    br: compressed_br.clone(),
+                    zstd: compressed_zstd.clone(),
+                    etag: etag.clone(),
+                    content_type: "text/html; charset=utf-8".to_string(),
+                    cache_control: cache_control_value.to_string(),
+                    is_not_found: route_match.not_found.is_some(),
+                    cached_at: Instant::now(),
+                }),
+                state.response_cache.config.max_entries,
+            );
+        }
+
+        let cached_response = response::CachedResponse {
+            body: body_bytes,
+            headers: response_headers,
+            metadata: response::CacheMetadata {
+                cached_at: Instant::now(),
+                ttl: cache_policy.ttl,
+                etag: Some(etag.clone()),
+                tags: response_cache_tags,
+            },
+            compressed_zstd,
+            compressed_br,
+            compressed_gzip,
+        };
+
+        state.response_cache.set(cache_key, cached_response).await;
+    }
+
+    {
+        use crate::server::compression::{CompressionEncoding, compress_body};
+        let encoding = CompressionEncoding::from_accept_encoding(accept_encoding);
+        let (body_bytes, actual_encoding) = compress_body(final_html, encoding).await;
+
+        if let Some(encoding_header) = actual_encoding.as_header_value() {
+            response_builder = response_builder.header("content-encoding", encoding_header);
+        }
+
+        #[expect(
+            clippy::expect_used,
+            reason = "Response::builder() with valid components never fails"
+        )]
+        Ok(response_builder.body(Body::from(body_bytes)).expect("Valid HTML response"))
     }
 }
 

@@ -10,8 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 
-pub mod request;
-
 use crate::{
     RscHtmlRenderer, RscRenderer,
     rendering::layout::LayoutHtmlCache,

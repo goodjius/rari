@@ -309,8 +309,8 @@ mod tests {
             let script = format!(
                 r#"(async function() {{
                     await new Promise((resolve) => setTimeout(resolve, {delay_ms}));
-                    await Deno.core.ops.op_fizz_chunk("{stream_id}", "chunk-{i}");
-                    Deno.core.ops.op_fizz_done("{stream_id}");
+                    await Deno.core.ops.op_stream_chunk("{stream_id}", "chunk-{i}");
+                    Deno.core.ops.op_stream_done("{stream_id}");
                 }})()"#
             );
 

@@ -1,7 +1,7 @@
 import type { Metadata, PageProps } from 'rari'
 
-export default function BlogPostPage({ params }: PageProps) {
-  const { slug } = params
+export default function BlogPostPage(props: PageProps) {
+  const slug = String(props.params.slug)
 
   return (
     <div>

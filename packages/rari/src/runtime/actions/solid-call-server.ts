@@ -1,4 +1,4 @@
-import { deserialize, serialize } from 'seroval'
+import { decodeSeroval, encodeSeroval } from '../seroval-json'
 import { applyRedirect, postAction, readActionRedirect } from './action-transport'
 import { ActionDidNotRevalidate, parseActionRevalidationKind } from './revalidation-kind'
 
@@ -16,7 +16,7 @@ export async function callServerSolid(id: string, args: readonly unknown[]): Pro
       'Content-Type': 'text/plain;charset=UTF-8',
       'rsc-action-id': id,
     },
-    serialize([...args]),
+    encodeSeroval([...args]),
   )
 
   const redirect = readActionRedirect(response)
@@ -40,7 +40,7 @@ export async function callServerSolid(id: string, args: readonly unknown[]): Pro
     window.dispatchEvent(new CustomEvent('rari:action-revalidated', { detail: { kind } }))
   }
 
-  const envelope: unknown = deserialize(await response.text())
+  const envelope: unknown = decodeSeroval(await response.text())
   if (!isEnvelope(envelope)) throw new Error(`Server action "${id}" returned a malformed response`)
   return envelope.v
 }

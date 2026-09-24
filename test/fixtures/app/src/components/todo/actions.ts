@@ -12,7 +12,7 @@ export interface Todo {
 const DEFAULT_TODOS: Todo[] = [
   {
     id: '1',
-    text: 'Learn React Server Components',
+    text: 'Learn Solid server actions',
     completed: true,
     createdAt: new Date().toISOString(),
   },
@@ -110,11 +110,7 @@ export interface TodoActionState {
   readonly todos?: readonly Todo[]
 }
 
-export async function addTodo(
-  _prevState: TodoActionState,
-  formData: FormData,
-): Promise<TodoActionState> {
-  const text = formData.get('text')
+export async function addTodo(text: string): Promise<TodoActionState> {
   if (typeof text !== 'string' || text.trim() === '') {
     const { todos } = await getSessionTodos()
     return { success: false, error: 'Todo text is required', todos }
@@ -132,12 +128,7 @@ export async function addTodo(
   return { success: true, todos }
 }
 
-export async function toggleTodo(formData: FormData) {
-  const todoId = formData.get('id')
-  if (typeof todoId !== 'string') {
-    const { todos } = await getSessionTodos()
-    return { success: false, error: 'Todo not found', todos }
-  }
+export async function toggleTodo(todoId: string): Promise<TodoActionState> {
   const id = await getSessionId()
   const { todos: currentTodos } = await getSessionTodos(id)
   if (!currentTodos.some(t => t.id === todoId)) {
@@ -151,12 +142,7 @@ export async function toggleTodo(formData: FormData) {
   return { success: true, todos }
 }
 
-export async function deleteTodo(formData: FormData) {
-  const todoId = formData.get('id')
-  if (typeof todoId !== 'string') {
-    const { todos } = await getSessionTodos()
-    return { success: false, error: 'Todo not found', todos }
-  }
+export async function deleteTodo(todoId: string): Promise<TodoActionState> {
   const id = await getSessionId()
   const { todos: currentTodos } = await getSessionTodos(id)
   if (!currentTodos.some(t => t.id === todoId)) {
@@ -168,13 +154,13 @@ export async function deleteTodo(formData: FormData) {
   return { success: true, todos }
 }
 
-export async function clearCompleted() {
+export async function clearCompleted(): Promise<TodoActionState> {
   const id = await getSessionId()
   const todos = updateSessionTodos(id, current => current.filter(t => !t.completed))
   return { success: true, todos }
 }
 
-export async function resetTodos() {
+export async function resetTodos(): Promise<TodoActionState> {
   const id = await getSessionId()
   const todos = updateSessionTodos(id, () => DEFAULT_TODOS.map(t => Object.assign({}, t)))
   return { success: true, todos }

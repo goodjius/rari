@@ -35,7 +35,7 @@ interface SolidWebModule {
 }
 
 interface SerovalModule {
-  serialize: (value: unknown) => string
+  toJSON: (value: unknown) => unknown
 }
 
 interface RariSolidIslandState {
@@ -95,9 +95,17 @@ interface SolidIslandRow {
   readonly props: string
 }
 
-function encodeSolidIslandRowScript(rowIndex: number, row: SolidIslandRow): string {
+/**
+ * `{ t }` is Solid's raw SSR node: a plain string would be HTML-escaped by the compiled
+ * template holes it is spliced into (islands inside `Show`, `For`, ...), so the script
+ * would render as text instead of executing. `<` is escaped so props can't close the tag.
+ */
+function encodeSolidIslandRowScript(rowIndex: number, row: SolidIslandRow): { t: string } {
   const rowText = `I${rowIndex.toString(16)}:${JSON.stringify(row)}\n`
-  return `<script>(window.__RARI_SOLID_ISLANDS__ ??= []).push(${JSON.stringify(rowText)})</script>`
+  const json = JSON.stringify(rowText)
+    .split('<')
+    .join(String.raw`\u003c`)
+  return { t: `<script>(window.__RARI_SOLID_ISLANDS__ ??= []).push(${json})</script>` }
 }
 
 /**
@@ -163,7 +171,7 @@ function renderSolidIsland(
     exportName: meta.exportName,
     islandId,
     renderId,
-    props: seroval.serialize(props),
+    props: JSON.stringify(seroval.toJSON(props)),
   }
 
   return [wrapper, encodeSolidIslandRowScript(rowIndex, row)]

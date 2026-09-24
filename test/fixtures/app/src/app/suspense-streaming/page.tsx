@@ -1,20 +1,29 @@
 import type { PageProps } from 'rari'
-import { Suspense } from 'react'
-import { isoTimestamp } from '../../utils/test-helpers'
+import { createResource, Suspense } from 'solid-js'
+import { isoTimestamp, sleep } from '../../utils/test-helpers'
 
-interface SlowProps {
-  readonly name: string
-  readonly delay: number
+function SlowComponent(props: { readonly name: string; readonly delay: number }) {
+  const [stamp] = createResource(async () => {
+    await sleep(props.delay)
+    return isoTimestamp()
+  })
+
+  return (
+    <div data-testid={`component-${props.name.toLowerCase()}`}>
+      {props.name}:{stamp()}
+    </div>
+  )
 }
 
-export default function SuspenseStreamingPage({ searchParams }: PageProps) {
-  const rawRun: unknown = searchParams.run
+export default function SuspenseStreamingPage(props: PageProps) {
+  const rawRun: unknown = props.searchParams.run
   const runId =
     typeof rawRun === 'string'
       ? rawRun
       : Array.isArray(rawRun) && typeof rawRun[0] === 'string'
         ? rawRun[0]
         : undefined
+
   return (
     <div>
       <h1>Suspense Streaming Test</h1>
@@ -28,17 +37,6 @@ export default function SuspenseStreamingPage({ searchParams }: PageProps) {
       <Suspense fallback={<div data-testid="loading-c">Loading C...</div>}>
         <SlowComponent name="C" delay={3000} />
       </Suspense>
-    </div>
-  )
-}
-
-async function SlowComponent({ name, delay }: SlowProps) {
-  await new Promise<void>(resolve => {
-    setTimeout(resolve, delay)
-  })
-  return (
-    <div data-testid={`component-${name.toLowerCase()}`}>
-      {name}:{isoTimestamp()}
     </div>
   )
 }

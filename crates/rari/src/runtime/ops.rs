@@ -13,7 +13,6 @@ use deno_error::JsErrorBox;
 use deno_runtime::BootstrapOptions;
 use rari_error::RariError;
 use rustc_hash::FxHashMap;
-use serde::Deserialize;
 use tokio::sync::mpsc;
 
 use crate::{
@@ -24,41 +23,6 @@ use crate::{
         middleware::request_context::{PendingCookie, PendingCookieKey, RequestContext},
     },
 };
-
-#[derive(Deserialize, Debug)]
-#[serde(tag = "type")]
-enum RscStreamOperation {
-    #[serde(rename = "module")]
-    ModuleReference {
-        row_id: String,
-        module_id: String,
-        chunks: Vec<String>,
-        name: String,
-        #[serde(default)]
-        async_module: bool,
-    },
-    #[serde(rename = "element")]
-    ReactElement { row_id: String, element: serde_json::Value },
-    #[serde(rename = "symbol")]
-    Symbol { row_id: String, symbol_ref: String },
-    #[serde(rename = "error")]
-    Error {
-        row_id: String,
-        message: String,
-        #[serde(default)]
-        stack: Option<String>,
-        #[serde(default)]
-        phase: Option<String>,
-        #[serde(default)]
-        digest: Option<String>,
-    },
-    #[serde(rename = "complete")]
-    Complete {
-        #[serde(default)]
-        #[expect(unused)]
-        final_row_id: Option<String>,
-    },
-}
 
 #[derive(Default)]
 #[non_exhaustive]
@@ -140,120 +104,6 @@ fn resolve_request_context(
     op_state.try_borrow::<Arc<RequestContext>>().cloned()
 }
 
-fn parse_hex_row_id(row_id: &str, context: &str) -> Result<u32, JsErrorBox> {
-    if !row_id.chars().all(|c| c.is_ascii_hexdigit()) {
-        tracing::error!("op_send_chunk_to_rust: invalid row_id '{}' for {}", row_id, context);
-        return Err(JsErrorBox::generic(format!("Invalid row_id: {row_id}")));
-    }
-
-    u32::from_str_radix(row_id, 16).map_err(|e| {
-        tracing::error!(
-            "op_send_chunk_to_rust: invalid row_id '{}' for {}: {}",
-            row_id,
-            context,
-            e
-        );
-        JsErrorBox::generic(format!("Invalid row_id: {row_id}"))
-    })
-}
-
-#[op2]
-pub async fn op_send_chunk_to_rust(
-    state: Rc<RefCell<OpState>>,
-    #[string] stream_id: String,
-    #[string] operation_json: String,
-) -> Result<(), JsErrorBox> {
-    let operation: RscStreamOperation = match serde_json::from_str(&operation_json) {
-        Ok(op) => op,
-        Err(e) => {
-            let err_msg = format!(
-                "Invalid JSON for RSC operation: {e}. JSON length: {}",
-                operation_json.len()
-            );
-            tracing::error!("{err_msg}");
-            return Err(JsErrorBox::generic(err_msg));
-        }
-    };
-
-    let sender_option = {
-        let mut op_state_ref = state.borrow_mut();
-        let Some(stream_op_state) = op_state_ref.try_borrow_mut::<StreamOpState>() else {
-            return Err(JsErrorBox::generic("StreamOpState not found."));
-        };
-
-        match &operation {
-            RscStreamOperation::Complete { .. } | RscStreamOperation::Error { .. } => {
-                stream_op_state.take_sender(&stream_id)
-            }
-            _ => stream_op_state.get_sender(&stream_id),
-        }
-    };
-
-    match (sender_option, operation) {
-        (
-            Some(sender),
-            RscStreamOperation::ModuleReference { row_id, module_id, chunks, name, async_module },
-        ) => {
-            let module_data = serde_json::json!({
-                "id": module_id,
-                "chunks": chunks,
-                "name": name,
-                "async": async_module
-            });
-
-            let row_id_num = parse_hex_row_id(&row_id, "module reference")?;
-            let rsc_row = format!("{row_id_num:x}:M{module_data}");
-
-            if sender.send(Ok(rsc_row.into_bytes())).await.is_err() {
-                tracing::error!("op_send_chunk_to_rust: receiver dropped for module reference.");
-            }
-        }
-        (Some(sender), RscStreamOperation::ReactElement { row_id, element }) => {
-            let row_id_num = parse_hex_row_id(&row_id, "React element")?;
-            let rsc_row = format!("{row_id_num:x}:J{element}");
-
-            if sender.send(Ok(rsc_row.into_bytes())).await.is_err() {
-                tracing::error!("op_send_chunk_to_rust: receiver dropped for React element.");
-            }
-        }
-        (Some(sender), RscStreamOperation::Symbol { row_id, symbol_ref }) => {
-            let row_id_num = parse_hex_row_id(&row_id, "symbol reference")?;
-            let rsc_row = format!("{row_id_num:x}:S\"{symbol_ref}\"");
-
-            if sender.send(Ok(rsc_row.into_bytes())).await.is_err() {
-                tracing::error!("op_send_chunk_to_rust: receiver dropped for symbol reference.");
-            }
-        }
-        (Some(sender), RscStreamOperation::Error { row_id, message, stack, phase, digest }) => {
-            tracing::error!("Streaming error in row {row_id}: {message}");
-            if let Some(stack_trace) = &stack {
-                tracing::error!("Stack trace: {stack_trace}");
-            }
-
-            let error_data = serde_json::json!({
-                "message": message,
-                "stack": stack,
-                "phase": phase,
-                "digest": digest
-            });
-
-            let row_id_num = parse_hex_row_id(&row_id, "error message")?;
-            let rsc_row = format!("{row_id_num:x}:E{error_data}");
-
-            if sender.send(Ok(rsc_row.into_bytes())).await.is_err() {
-                tracing::error!("op_send_chunk_to_rust: receiver dropped for error message.");
-            }
-        }
-        (Some(_sender), RscStreamOperation::Complete { final_row_id: _ }) => {}
-        (None, operation) => {
-            tracing::error!("No sender available for operation: {operation:?}");
-            return Err(JsErrorBox::generic("No chunk sender available"));
-        }
-    }
-
-    Ok(())
-}
-
 #[op2(fast)]
 pub fn op_rari_has_node_modules_dir(state: &OpState) -> bool {
     state.try_borrow::<BootstrapOptions>().is_some_and(|options| options.has_node_modules_dir)
@@ -332,10 +182,9 @@ pub fn get_streaming_ops() -> Vec<OpDecl> {
         op_rari_has_node_modules_dir(),
         op_main_module(),
         op_ppid(),
-        op_send_chunk_to_rust(),
-        op_fizz_chunk_try(),
-        op_fizz_chunk(),
-        op_fizz_done(),
+        op_stream_chunk_try(),
+        op_stream_chunk(),
+        op_stream_done(),
         op_stream_promise_settled(),
         op_internal_log(),
         op_sanitize_html(),
@@ -347,9 +196,9 @@ pub fn get_streaming_ops() -> Vec<OpDecl> {
     ]
 }
 
-/// Sync try-send for Fizz chunks. Returns: `0` sent, `1` full (use async op), `2` disconnected.
+/// Sync try-send for HTML stream chunks. Returns: `0` sent, `1` full (use async op), `2` disconnected.
 #[op2(fast)]
-pub fn op_fizz_chunk_try(state: &OpState, #[string] stream_id: &str, #[string] html: &str) -> u8 {
+pub fn op_stream_chunk_try(state: &OpState, #[string] stream_id: &str, #[string] html: &str) -> u8 {
     let Some(stream_op_state) = state.try_borrow::<StreamOpState>() else {
         return 2;
     };
@@ -364,7 +213,7 @@ pub fn op_fizz_chunk_try(state: &OpState, #[string] stream_id: &str, #[string] h
 }
 
 #[op2]
-pub async fn op_fizz_chunk(
+pub async fn op_stream_chunk(
     state: Rc<RefCell<OpState>>,
     #[string] stream_id: String,
     #[string] html: String,
@@ -386,16 +235,16 @@ pub async fn op_fizz_chunk(
                 Ok(()) => Ok(()),
                 Err(mpsc::error::TrySendError::Full(msg)) => {
                     if sender.send(msg).await.is_err() {
-                        tracing::debug!("Fizz stream client disconnected before chunk was sent");
-                        return Err(JsErrorBox::generic("Fizz stream receiver disconnected"));
+                        tracing::debug!("HTML stream client disconnected before chunk was sent");
+                        return Err(JsErrorBox::generic("HTML stream receiver disconnected"));
                     }
                     Ok(())
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
-                    // Leave the map entry for op_fizz_done / settle cleanup; just
+                    // Leave the map entry for op_stream_done / settle cleanup; just
                     // signal disconnect so JS stops pumping this stream.
-                    tracing::debug!("Fizz stream client disconnected before chunk was sent");
-                    Err(JsErrorBox::generic("Fizz stream receiver disconnected"))
+                    tracing::debug!("HTML stream client disconnected before chunk was sent");
+                    Err(JsErrorBox::generic("HTML stream receiver disconnected"))
                 }
             }
         }
@@ -404,7 +253,7 @@ pub async fn op_fizz_chunk(
 }
 
 #[op2(fast)]
-pub fn op_fizz_done(state: &mut OpState, #[string] stream_id: &str) {
+pub fn op_stream_done(state: &mut OpState, #[string] stream_id: &str) {
     if let Some(stream_op_state) = state.try_borrow_mut::<StreamOpState>() {
         stream_op_state.take_sender(stream_id);
     }

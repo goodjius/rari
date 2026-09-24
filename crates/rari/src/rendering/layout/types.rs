@@ -184,21 +184,8 @@ pub struct AppleWebAppMetadata {
     pub capable: Option<bool>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ChunkedContentType {
-    Html,
-    RscFlight,
-}
-
 #[non_exhaustive]
 pub enum RenderResult {
     Static(String),
-    StaticBinary(Vec<u8>),
-    Chunked {
-        content_type: ChunkedContentType,
-        shell: Bytes,
-        closing: Bytes,
-        chunks: Receiver<Result<Vec<u8>, RariError>>,
-    },
+    Chunked { shell: Bytes, closing: Bytes, chunks: Receiver<Result<Vec<u8>, RariError>> },
 }

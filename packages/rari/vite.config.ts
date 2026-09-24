@@ -1,8 +1,6 @@
 import path from 'node:path'
 import { defineConfig } from 'vite-plus'
 import { monorepoFmt, monorepoLint } from '../../.config/lint/monorepo'
-import { createSilenceReactDirectiveLogsPlugin } from './src/vite/build/silence-directive-logs'
-import { createReactCompilerPlugin } from './src/vite/transform/react-compiler'
 
 export default defineConfig({
   fmt: monorepoFmt,
@@ -28,40 +26,21 @@ export default defineConfig({
       'mdx/define': 'src/mdx/define.ts',
       'mdx/registry': 'src/mdx/registry.ts',
       'headers': 'src/headers.ts',
-      'runtime/call-server': 'src/runtime/actions/call-server.ts',
       'runtime/solid-call-server': 'src/runtime/actions/solid-call-server.ts',
-      'runtime/action-flight-refresh': 'src/runtime/actions/flight-refresh.ts',
-      'runtime/merge-flight-refresh': 'src/runtime/flight/merge-refresh.ts',
-      'runtime/flight-route-cache': 'src/runtime/flight/route-cache.ts',
-      'runtime/flight-router-state': 'src/runtime/flight/router-state.ts',
       'runtime/action-revalidation-kind': 'src/runtime/actions/revalidation-kind.ts',
-      'runtime/entry-client': 'src/runtime/entry-client.ts',
       'runtime/entry-client-solid': 'src/runtime/entry-client-solid.ts',
-      'runtime/rsc-references': 'src/runtime/rsc/references.ts',
-      'runtime/rsc-client-runtime': 'src/runtime/rsc/client-runtime.ts',
-      'runtime/AppRouterProvider': 'src/runtime/flight/app-router-provider.tsx',
-      'runtime/ClientRouter': 'src/router/navigation/client-router.tsx',
-      'runtime/LoadingErrorBoundary': 'src/runtime/boundaries/loading-error-boundary.tsx',
-      'runtime/ErrorBoundaryWrapper': 'src/runtime/boundaries/error-boundary-wrapper.tsx',
       'proxy/runtime-executor': 'src/proxy/runtime/runtime-executor.ts',
       'proxy/RariRequest': 'src/proxy/http/request.ts',
       'proxy/RariResponse': 'src/proxy/http/response.ts',
     },
     minify: true,
-    plugins: [createSilenceReactDirectiveLogsPlugin(), createReactCompilerPlugin(true, 'library')],
     deps: {
       neverBundle: [
         '@mdx-js/mdx',
         '@capsizecss/metrics',
         '@capsizecss/unpack',
-        'react',
-        'react/compiler-runtime',
-        'react-dom',
         'vite',
         'vite-plus',
-        'react-server-dom-webpack',
-        'react-server-dom-webpack/client',
-        'react-server-dom-webpack/server',
         '@babel/core',
         'babel-preset-solid',
         'seroval',
@@ -69,13 +48,6 @@ export default defineConfig({
         'solid-js/web',
         'solid-js/store',
         'solid-refresh/babel',
-        'virtual:app-router-provider',
-        'virtual:app-router-provider.tsx',
-        'virtual:client-router',
-        'virtual:client-router.tsx',
-        'virtual:react-flight-client',
-        'virtual:react-flight-client.ts',
-        'virtual:rsc-integration.ts',
         'rari/router',
         'rari/mdx/registry',
         'rari/mdx/define',

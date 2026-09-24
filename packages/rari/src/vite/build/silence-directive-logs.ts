@@ -3,21 +3,22 @@ type DirectiveLog = Readonly<{
   message?: string
 }>
 
-export function isReactDirectiveLog(log: DirectiveLog): boolean {
+export function isDirectiveLog(log: DirectiveLog): boolean {
   return (
     log.code === 'MODULE_LEVEL_DIRECTIVE' &&
     (log.message?.includes('use client') === true || log.message?.includes('use server') === true)
   )
 }
 
-export function createSilenceReactDirectiveLogsPlugin(): {
+/** Bundlers warn that 'use client'/'use server' semantics may not be preserved; rari's transforms own them. */
+export function createSilenceDirectiveLogsPlugin(): {
   name: string
   onLog: (_level: string, log: DirectiveLog) => false | undefined
 } {
   return {
-    name: 'rari:silence-react-directive-logs',
+    name: 'rari:silence-directive-logs',
     onLog(_level, log) {
-      return isReactDirectiveLog(log) ? false : undefined
+      return isDirectiveLog(log) ? false : undefined
     },
   }
 }

@@ -8,7 +8,6 @@ export const monorepoIgnorePatterns: string[] = [
   'packages/rari-*/',
   'packages/use-cache-*/',
   'packages/create-rari-app/templates/**',
-  'packages/rari/src/vite/transform/react-refresh-runtime.ts',
 ]
 
 export const monorepoReadonlyParameterAllows: Array<
@@ -33,19 +32,6 @@ export const monorepoReadonlyParameterAllows: Array<
       'WheelEvent',
       'PageTransitionEvent',
     ],
-  },
-  {
-    from: 'package',
-    name: [
-      'ReactElement',
-      'ReactPortal',
-      'SyntheticEvent',
-      'MouseEvent',
-      'CSSProperties',
-      'ErrorInfo',
-      'SVGProps',
-    ],
-    package: 'react',
   },
   { from: 'package', name: ['PostHog'], package: 'posthog-js' },
   { from: 'package', name: ['Buffer'], package: 'node' },
@@ -100,13 +86,7 @@ export const monorepoEslintConfigs: Linter.Config[] = [
     ignores: monorepoIgnorePatterns,
   },
   {
-    files: ['crates/rari/src/runtime/ext/**/*.ts'],
-    rules: {
-      'react/no-unnecessary-use-prefix': 'off',
-    },
-  },
-  {
-    files: ['tools/bundle-react-esm/*.ts', 'tools/bundle-solid-esm/*.ts'],
+    files: ['tools/bundle-solid-esm/*.ts'],
     rules: {
       'no-console': 'off',
     },
@@ -135,7 +115,13 @@ export const monorepoLint: OxlintConfig = {
   overrides: [
     ...(rariLint.overrides ?? []),
     {
-      files: ['tools/bundle-react-esm/*.ts', 'tools/bundle-solid-esm/*.ts'],
+      files: ['test/fixtures/**/*.{ts,tsx}'],
+      rules: {
+        'typescript/prefer-readonly-parameter-types': 'off',
+      },
+    },
+    {
+      files: ['tools/bundle-solid-esm/*.ts'],
       rules: {
         'no-console': 'off',
       },

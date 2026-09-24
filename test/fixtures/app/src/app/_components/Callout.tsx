@@ -1,9 +1,9 @@
-import type { ReactNode } from 'react'
+import type { JSX } from 'solid-js'
 
-export function Callout({ children }: Readonly<{ children: ReactNode }>) {
+export function Callout(props: { readonly children: JSX.Element }) {
   return (
-    <aside data-testid="private-callout" className="callout">
-      {children}
+    <aside data-testid="private-callout" class="callout">
+      {props.children}
     </aside>
   )
 }

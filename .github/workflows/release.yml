@@ -108,8 +108,8 @@ jobs:
           cache: 'true'
           install: 'false'
 
-      - name: Bundle React ESM vendor files
-        uses: ./.github/actions/bundle-react-esm
+      - name: Bundle Solid ESM vendor files
+        uses: ./.github/actions/bundle-solid-esm
 
       - name: Create snapshot placeholder
         shell: bash
