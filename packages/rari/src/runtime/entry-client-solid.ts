@@ -1,26 +1,19 @@
 /**
- * Phase-2 client entry for the React -> SolidJS migration. Mirrors
- * entry-client.ts's role (decode the server payload, hydrate) but against
- * the island row protocol from
- * crates/rari/src/rendering/base/js/solid_islands.ts, and against Solid's
- * `hydrate` instead of `hydrateRoot`.
- *
- * Standalone template only: not wired into the Vite build, the app router,
- * or any virtual module - those integrations are deferred to a later
- * phase. Also unverified by a real-V8 test in this repo's test suite: the
- * vendored `solid-js/web` build (crates/rari/src/runtime/ext/rari/solid/vendor)
- * is the *server* build (needed for renderToString/renderToStream to work
- * at all - see tools/bundle-solid-esm/bundle.ts), whose `hydrate` export is
- * a hard `notSup` stub; real hydration only exists in the client build,
- * which additionally needs a real `document` the V8/deno_core runtime
- * doesn't have. This file is exercised only by whatever real browser
- * eventually loads it.
+ * Client entry: hydrates the `'use client'` islands the server marked up (rows from
+ * crates/rari/src/rendering/base/js/solid_islands.ts) with Solid's `hydrate`, and starts the
+ * client router for navigation between pages.
  */
 import type { Component } from 'solid-js'
 import { createComponent } from 'solid-js'
 import { hydrate } from 'solid-js/web'
+import { startClientRouter } from '../router/navigation/client-router'
 import { isFunction, isRecord } from '../shared/utils/type-guards'
 import { removeHmrFailureBanner, showHmrFailureBanner } from './boundaries/hmr-failure-banner'
+import {
+  registerIslandDisposer,
+  settleSolidIslands,
+  trackHydrationPromise,
+} from './islands-lifecycle'
 import { decodeSeroval } from './seroval-json'
 
 export interface SolidIslandRow {
@@ -88,9 +81,15 @@ export async function hydrateSolidIsland(row: Readonly<SolidIslandRow>): Promise
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion - component shape is dynamic (loaded by module id)
   const typedComponent = component as Component<Record<string, unknown>>
-  hydrate(() => createComponent(typedComponent, props), container, {
+  const dispose = hydrate(() => createComponent(typedComponent, props), container, {
     renderId: row.renderId,
   })
+  registerIslandDisposer(dispose)
+}
+
+// oxlint-disable-next-line typescript/promise-function-async -- forwards the tracked Promise as is
+function trackHydration(row: Readonly<SolidIslandRow>): Promise<void> {
+  return trackHydrationPromise(async () => hydrateSolidIsland(row))
 }
 
 declare global {
@@ -109,23 +108,19 @@ declare global {
  */
 export function hydrateAllSolidIslands(): void {
   const existing = window.__RARI_SOLID_ISLANDS__ ?? []
-  const initial = existing.map(async rowText => hydrateSolidIsland(decodeSolidIslandRow(rowText)))
+  for (const rowText of existing) void trackHydration(decodeSolidIslandRow(rowText))
 
   const rows: string[] = []
-  const hydrateRows = (incoming: readonly string[]): number => {
-    for (const rowText of incoming) void hydrateSolidIsland(decodeSolidIslandRow(rowText))
+  const hydrateRows = (...incoming: readonly string[]): number => {
+    for (const rowText of incoming) void trackHydration(decodeSolidIslandRow(rowText))
     // The instance's own `push` is replaced below, so call the real one explicitly.
     return Array.prototype.push.apply(rows, [...incoming])
   }
   window.__RARI_SOLID_ISLANDS__ = Object.assign(rows, { push: hydrateRows })
-  // Flag for tooling (e2e): every island present at load has finished hydrating.
-  void Promise.allSettled(initial).then(results => {
-    for (const result of results) {
-      if (result.status === 'rejected')
-        console.error('[rari] island hydration failed:', result.reason)
-    }
+  void settleSolidIslands().then(() => {
     window.__rari_client_ready = true
   })
+  startClientRouter()
 }
 
 if (import.meta.hot) {
