@@ -20,7 +20,11 @@ import { asError } from '../../shared/utils/type-guards'
 export type SolidGenerateMode = 'dom' | 'ssr'
 
 export interface SolidCompilerOptions {
-  /** Enable solid-refresh HMR wrapping (dev server, client environment only). */
+  /**
+   * Opt in to solid-refresh component HMR (dev server, client only). Off by default: its wrapper
+   * adds a component level on the client that the server render lacks, which shifts hydration
+   * keys. Without it, edits rebuild the server bundles and reload the page.
+   */
   readonly hmr?: boolean
 }
 

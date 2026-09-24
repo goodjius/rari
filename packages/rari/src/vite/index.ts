@@ -1656,8 +1656,6 @@ hydrateAllSolidIslands()
 
       if (file.includes('/dist/') || file.includes('\\dist\\')) return []
 
-      const componentType = hmrCoordinator?.detectComponentType(file) ?? 'unknown'
-
       const isAppRouterFile = file.includes('/app/') || file.includes('\\app\\')
       const hasExtension = (fileName: string, baseName: string) =>
         fileName.endsWith(`${baseName}.tsx`) ||
@@ -1690,15 +1688,12 @@ hydrateAllSolidIslands()
         return undefined
       }
 
-      if (componentType === 'client') return undefined
+      // Islands and server components are both baked into the server bundles that produce the
+      // hydratable HTML, so any change rebuilds those bundles; the client reloads once they are
+      // registered (see entry-client-solid.ts).
+      if (hmrCoordinator) await hmrCoordinator.handleServerComponentUpdate(file, server)
 
-      if (componentType === 'server') {
-        if (hmrCoordinator) await hmrCoordinator.handleServerComponentUpdate(file, server)
-
-        return []
-      }
-
-      return undefined
+      return []
     },
 
     generateBundle(_options, bundle) {

@@ -17,6 +17,7 @@
     "test:solid": "vp test run --config test/solid/vite.config.ts",
     "test:unit:coverage": "vp test run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:dev": "playwright test --config playwright.dev.config.ts",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:smoke": "playwright test smoke.spec.ts"
   },

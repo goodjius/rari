@@ -20,6 +20,7 @@ import type { Component } from 'solid-js'
 import { createComponent } from 'solid-js'
 import { hydrate } from 'solid-js/web'
 import { isFunction, isRecord } from '../shared/utils/type-guards'
+import { removeHmrFailureBanner, showHmrFailureBanner } from './boundaries/hmr-failure-banner'
 import { decodeSeroval } from './seroval-json'
 
 export interface SolidIslandRow {
@@ -124,5 +125,33 @@ export function hydrateAllSolidIslands(): void {
         console.error('[rari] island hydration failed:', result.reason)
     }
     window.__rari_client_ready = true
+  })
+}
+
+if (import.meta.hot) {
+  const { hot } = import.meta
+  hot.on('rari:server-component-updated', () => {
+    window.location.reload()
+  })
+  hot.on('rari:hmr-error-cleared', () => {
+    removeHmrFailureBanner()
+  })
+  hot.on('rari:hmr-error', (data: Readonly<Record<string, unknown>>) => {
+    const message = typeof data.msg === 'string' ? data.msg : 'Rebuild failed'
+    showHmrFailureBanner({
+      failure: {
+        timestamp: typeof data.t === 'number' ? data.t : Date.now(),
+        error: new Error(message),
+        type: 'fetch',
+        details: message,
+        filePath: typeof data.file === 'string' ? data.file : undefined,
+        consecutiveFailures: typeof data.count === 'number' ? data.count : 1,
+      },
+      maxRetries: typeof data.max === 'number' ? data.max : 5,
+      onRefresh: () => {
+        window.location.reload()
+      },
+      onDismiss: () => {},
+    })
   })
 }
