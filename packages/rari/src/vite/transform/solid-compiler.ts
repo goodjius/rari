@@ -52,7 +52,7 @@ interface BabelModules {
 }
 
 export function createSolidCompilerPlugin(options: SolidCompilerOptions = {}): Plugin {
-  const hmrEnabled = options.hmr !== false
+  const hmrEnabled = options.hmr === true
   let modules: BabelModules | undefined
   let sourcemap = true
   let isServe = false

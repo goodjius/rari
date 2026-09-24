@@ -52,10 +52,7 @@ use crate::{
         },
         error_response,
         middleware::request_context::RequestContext,
-        rendering::{
-            metadata::apply_page_metadata, pretty_html::pretty_print_html,
-            utils::inject_assets_into_html,
-        },
+        rendering::{metadata::apply_page_metadata, utils::inject_assets_into_html},
         routing::{app_icons::inject_app_icons_into_metadata, app_router::AppRouteMatch},
     },
     utils::path::path_to_file_url,
@@ -198,10 +195,6 @@ async fn merge_response_cache_tags(state: &ServerState, base_tags: Vec<String>) 
         runtime.collect_page_cache_tags().await.unwrap_or_default()
     };
     response::RouteCachePolicy::merge_cache_tags(base_tags, &page_cache_tags)
-}
-
-pub(crate) fn wrap_html_with_metadata(html_content: String, state: &ServerState) -> String {
-    if state.config.is_development() { pretty_print_html(&html_content) } else { html_content }
 }
 
 fn should_use_streaming(route_match: &AppRouteMatch, config: &Config) -> bool {
@@ -611,7 +604,7 @@ pub async fn render_synchronous(
                         }
                     };
 
-                let final_html = wrap_html_with_metadata(html_with_assets, &state);
+                let final_html = html_with_assets;
 
                 let status_code = if is_not_found { StatusCode::NOT_FOUND } else { StatusCode::OK };
                 let cache_control = state.config.get_cache_control_for_route(&context.pathname);
@@ -701,7 +694,7 @@ pub async fn render_streaming_with_layout(
                 }
             };
 
-            let final_html = wrap_html_with_metadata(html_with_assets, &state);
+            let final_html = html_with_assets;
 
             let status_code = if is_not_found { StatusCode::NOT_FOUND } else { StatusCode::OK };
             let cache_control = state.config.get_cache_control_for_route(&context.pathname);
@@ -774,11 +767,7 @@ pub async fn render_fallback_html(
             .unwrap_or_default()
     };
 
-    let mut html_shell = emergency_fallback_shell(&client_head);
-
-    if state.config.is_development() {
-        html_shell = pretty_print_html(&html_shell);
-    }
+    let html_shell = emergency_fallback_shell(&client_head);
 
     let body = Bytes::from(html_shell);
     if state.config.is_production() {
@@ -1242,7 +1231,7 @@ pub async fn handle_app_route(
                 }
             };
 
-            let final_html = wrap_html_with_metadata(html_with_assets, &state);
+            let final_html = html_with_assets;
 
             let etag = response::ResponseCache::generate_etag(final_html.as_bytes());
 
@@ -1256,7 +1245,7 @@ pub async fn handle_app_route(
                     return render_fallback_html(&state, route_match.not_found.is_some()).await;
                 }
             };
-            let final_html = wrap_html_with_metadata(html, &state);
+            let final_html = html;
             let etag = response::ResponseCache::generate_etag(final_html.as_bytes());
             (final_html, etag)
         }

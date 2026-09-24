@@ -20,11 +20,7 @@ use crate::{
         ServerState,
         cache::response,
         middleware::request_context::RequestContext,
-        routing::{
-            AppRouteMatch, AppRouter,
-            app::{collect_page_metadata, wrap_html_with_metadata},
-            types::ParamValue,
-        },
+        routing::{AppRouteMatch, AppRouter, app::collect_page_metadata, types::ParamValue},
     },
 };
 
@@ -172,7 +168,6 @@ async fn warm_route(
         && state.response_cache.config.enabled
         && state.config.server.origin.is_some();
 
-    let html = wrap_html_with_metadata(html, state);
     let etag = response::ResponseCache::generate_etag(html.as_bytes());
 
     if for_response_cache {
