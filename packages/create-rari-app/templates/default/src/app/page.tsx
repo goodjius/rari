@@ -1,12 +1,14 @@
-import type { PageProps, Metadata } from 'rari'
+import type { Metadata } from 'rari'
+import Counter from '@/components/Counter'
 import ServerTime from '@/components/ServerTime'
 import Welcome from '@/components/Welcome'
 
-export default function HomePage(_params: PageProps) {
+export default function HomePage() {
   return (
-    <div className="space-y-8">
+    <div class="space-y-8">
       <Welcome />
       <ServerTime />
+      <Counter />
     </div>
   )
 }

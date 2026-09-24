@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join, relative } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
@@ -20,7 +20,7 @@ interface ProjectOptions {
 const templates = {
   default: {
     name: 'Default',
-    description: 'A clean starter with React Server Components',
+    description: 'A clean SolidJS starter with server rendering and islands',
   },
 } as const
 
@@ -155,42 +155,21 @@ async function createProject(options: ProjectOptions) {
 }
 
 async function copyTemplate(templatePath: string, projectPath: string, options: ProjectOptions) {
-  const templateFiles = [
-    'package.json',
-    'vite.config.ts',
-    'tsconfig.json',
-    'README.md',
-    'src/app/globals.css',
-    'src/app/layout.tsx',
-    'src/app/page.tsx',
-    'src/app/robots.ts',
-    'src/app/about/page.tsx',
-    'src/components/Welcome.tsx',
-    'src/components/ServerTime.tsx',
-    'src/components/Rari.tsx',
-    'gitignore',
-  ]
+  const files = await readdir(templatePath, { recursive: true, withFileTypes: true })
 
-  await mkdir(join(projectPath, 'src', 'app', 'about'), { recursive: true })
-  await mkdir(join(projectPath, 'src', 'components'), { recursive: true })
+  for (const entry of files) {
+    if (!entry.isFile()) continue
 
-  for (const file of templateFiles) {
-    const sourcePath = join(templatePath, file)
-    const destFile = file === 'gitignore' ? '.gitignore' : file
-    const destPath = join(projectPath, destFile)
+    const sourcePath = join(entry.parentPath, entry.name)
+    const relativePath = relative(templatePath, sourcePath)
+    const destPath = join(projectPath, relativePath === 'gitignore' ? '.gitignore' : relativePath)
 
-    try {
-      let content = await readFile(sourcePath, 'utf-8')
+    const content = (await readFile(sourcePath, 'utf-8'))
+      .replace(TEMPLATE_PLACEHOLDER_REGEX, options.name)
+      .replace(PACKAGE_MANAGER_PLACEHOLDER_REGEX, options.packageManager)
 
-      content = content
-        .replace(TEMPLATE_PLACEHOLDER_REGEX, options.name)
-        .replace(PACKAGE_MANAGER_PLACEHOLDER_REGEX, options.packageManager)
-
-      await mkdir(dirname(destPath), { recursive: true })
-      await writeFile(destPath, content)
-    } catch (error) {
-      console.warn(`Warning: Could not copy ${file}:`, error)
-    }
+    await mkdir(dirname(destPath), { recursive: true })
+    await writeFile(destPath, content)
   }
 }
 

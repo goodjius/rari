@@ -2,7 +2,7 @@
 
 > Runtime Accelerated Rendering Infrastructure
 
-A React Server Components application powered by [rari](https://rari.build).
+A SolidJS application powered by [rari](https://rari.build).
 
 ## Getting Started
 
@@ -20,8 +20,8 @@ Visit [http://localhost:5173](http://localhost:5173) to see your app.
 
 - **App Router** - File-based routing with layouts, loading states, and error boundaries
 - **Server-Side Rendering** - Pre-rendered HTML with instant hydration
-- **React Server Components** - Server components by default, client components when you need them
-- **Rust-powered runtime** - HTTP server, RSC renderer, and routing written in Rust with embedded V8
+- **Islands** - Server-rendered by default; `'use client'` components hydrate in the browser
+- **Rust-powered runtime** - HTTP server, SSR renderer, and routing written in Rust with embedded V8
 - **Zero-config setup** - Works out of the box with pre-built binaries
 - **Hot module reloading** - Instant feedback during development
 - **node_modules support** - Standard npm package resolution without `npm:` specifier
@@ -110,7 +110,7 @@ git push origin main
 - [rari Documentation](https://rari.build/docs)
 - [Railway Documentation](https://docs.railway.app)
 - [Render Documentation](https://render.com/docs)
-- [React Server Components](https://react.dev/reference/react/use-server)
+- [SolidJS](https://www.solidjs.com)
 
 ---
 

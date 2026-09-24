@@ -16,7 +16,6 @@
   },
   "keywords": [
     "rari",
-    "react",
     "scaffolding",
     "cli",
     "create-app",
@@ -28,7 +27,8 @@
     "framework",
     "zero-config",
     "starter",
-    "project-template"
+    "project-template",
+    "solid"
   ],
   "bin": {
     "create-rari-app": "dist/index.mjs"

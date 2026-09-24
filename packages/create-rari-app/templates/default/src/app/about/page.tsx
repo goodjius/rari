@@ -1,18 +1,18 @@
-import type { PageProps, Metadata } from 'rari'
+import type { Metadata } from 'rari'
 
-export default function AboutPage(_params: PageProps) {
+export default function AboutPage() {
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">About</h1>
-        <p className="text-lg text-gray-600 mb-4">
+    <div class="space-y-6">
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+        <h1 class="text-4xl font-bold text-gray-900 mb-4">About</h1>
+        <p class="text-lg text-gray-600 mb-4">
           This is a rari application using the app router.
         </p>
-        <p className="text-gray-600">
-          rari is a performance-first React framework powered by Rust, featuring:
+        <p class="text-gray-600">
+          rari is a performance-first SolidJS framework powered by Rust, featuring:
         </p>
-        <ul className="list-disc list-inside text-gray-600 mt-4 space-y-2">
-          <li>React Server Components</li>
+        <ul class="list-disc list-inside text-gray-600 mt-4 space-y-2">
+          <li>Streaming server rendering with islands</li>
           <li>File-based routing</li>
           <li>Server Actions</li>
           <li>Zero-config setup</li>
