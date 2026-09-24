@@ -41,9 +41,7 @@ impl error::Error for TransformError {}
 #[non_exhaustive]
 pub struct TransformOutput {
     pub code: String,
-    pub needs_react_cache: bool,
     pub needs_cache_wrapper: bool,
-    pub needs_register_ref: bool,
 }
 
 #[expect(
@@ -57,9 +55,7 @@ struct TransformVisitor {
     has_cache_fns: bool,
     file_cache_kind: Option<String>,
     module_idents: FxHashSet<Id>,
-    needs_react_cache: bool,
     needs_cache_wrapper: bool,
-    needs_register_ref: bool,
 }
 
 impl TransformVisitor {
@@ -71,9 +67,7 @@ impl TransformVisitor {
             has_cache_fns: false,
             file_cache_kind: None,
             module_idents: FxHashSet::default(),
-            needs_react_cache: false,
             needs_cache_wrapper: false,
-            needs_register_ref: false,
         }
     }
 }
@@ -217,7 +211,6 @@ impl TransformVisitor {
         );
 
         self.needs_cache_wrapper = true;
-        self.needs_register_ref = true;
 
         let replacement = hoist::create_bound_replacement(
             &local_binding_name,
@@ -286,9 +279,7 @@ pub fn transform_source(
             if !visitor.has_cache_fns {
                 return Ok(TransformOutput {
                     code: source.to_string(),
-                    needs_react_cache: false,
                     needs_cache_wrapper: false,
-                    needs_register_ref: false,
                 });
             }
 
@@ -307,12 +298,7 @@ pub fn transform_source(
             let code =
                 String::from_utf8(code_buf).map_err(|e| TransformError::Utf8(format!("{e:?}")))?;
 
-            Ok(TransformOutput {
-                code,
-                needs_react_cache: visitor.needs_react_cache,
-                needs_cache_wrapper: visitor.needs_cache_wrapper,
-                needs_register_ref: visitor.needs_register_ref,
-            })
+            Ok(TransformOutput { code, needs_cache_wrapper: visitor.needs_cache_wrapper })
         })
     }));
 

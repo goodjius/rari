@@ -250,23 +250,6 @@ fn create_args_slice_expr() -> Box<Expr> {
     }))
 }
 
-fn create_register_ref_statement(cache_name: &str, ref_id: &str) -> ModuleItem {
-    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
-        span: DUMMY_SP,
-        expr: Box::new(Expr::Call(CallExpr {
-            span: DUMMY_SP,
-            ctxt: SyntaxContext::default(),
-            callee: Callee::Expr(ident_expr("registerServerReference")),
-            args: vec![
-                ExprOrSpread { spread: None, expr: ident_expr(cache_name) },
-                ExprOrSpread { spread: None, expr: Box::new(Expr::Lit(Lit::Str(str_lit(ref_id)))) },
-                ExprOrSpread { spread: None, expr: null_expr() },
-            ],
-            type_args: None,
-        })),
-    }))
-}
-
 #[non_exhaustive]
 pub struct CacheDeclarationInput<'a> {
     pub fn_decl: &'a FnDecl,
@@ -297,7 +280,6 @@ pub fn create_cache_declarations(
         input.cache_kind,
         cache_key_arg_count,
     ));
-    extra_items.push(create_register_ref_statement(input.cache_name, input.ref_id));
 }
 
 /// Build the `apply` call argument array: `[$$ACTION_BOUND_ARGS, ...args]` or `[...args]`.
@@ -433,7 +415,7 @@ pub fn create_bound_replacement(
     // We emit an async wrapper so that the throw-a-Promise (suspense signal)
     // from `$$cache__` is converted to a real await/rejection by the `await`
     // in the caller's component. Without this, the throw propagates up the
-    // call stack to the React RSC serializer, which can't recognise a raw
+    // call stack to the renderer, which can't recognise a raw
     // Promise as a suspense signal and renders it as `[object Promise]`.
 
     let has_bound_args = !closure_vars.is_empty();

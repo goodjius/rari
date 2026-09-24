@@ -51,9 +51,7 @@ export interface TransformOptions {
 
 export interface TransformResult {
   readonly code: string
-  readonly needsReactCache: boolean
   readonly needsCacheWrapper: boolean
-  readonly needsRegisterRef: boolean
 }
 
 export interface NativeAddon {
@@ -91,9 +89,7 @@ export function transformUseCache(source: string, options: TransformOptions): Tr
   if (!nativeBinding) {
     return {
       code: source,
-      needsReactCache: false,
       needsCacheWrapper: false,
-      needsRegisterRef: false,
     }
   }
 

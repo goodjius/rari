@@ -13,14 +13,14 @@
 [![Discord](https://img.shields.io/badge/chat-discord-blue?style=flat&logo=discord)](https://discord.gg/GSh2Ak3b8Q)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/rari-build/rari?utm_source=badge)
 
-**rari** is a React Server Components framework running on a Rust runtime. It has three layers: a Rust runtime (HTTP server, RSC renderer, and router with embedded V8), a React framework (app router, server actions, streaming/Suspense), and a build toolchain (Rolldown-powered Vite bundling, TypeScript 7 type checking). You write standard React, the runtime underneath is Rust instead of Node.
+**rari** is a SolidJS framework running on a Rust runtime. It has three layers: a Rust runtime (HTTP server, SSR renderer, and router with embedded V8), a SolidJS framework (app router, server actions, streaming/Suspense, client islands), and a build toolchain (Rolldown-powered Vite bundling, TypeScript 7 type checking). You write standard Solid, the runtime underneath is Rust instead of Node.
 
 ## Features
 
 - **App Router** - File-based routing with layouts, loading states, and error boundaries
 - **Server-Side Rendering** - Pre-rendered HTML with instant hydration
-- **React Server Components** - Server components by default, client components when you need them
-- **Rust-powered runtime** - HTTP server, RSC renderer, and routing written in Rust with embedded V8
+- **Islands** - Server-rendered by default; `'use client'` components hydrate in the browser
+- **Rust-powered runtime** - HTTP server, SSR renderer, and routing written in Rust with embedded V8
 - **Zero-config setup** - Works out of the box with pre-built binaries
 - **Hot module reloading** - Instant feedback during development
 - **node_modules support** - Standard npm package resolution without `npm:` specifier
@@ -56,7 +56,7 @@ Visit [rari.build/docs](https://rari.build/docs) for complete documentation, gui
 
 ## Performance
 
-rari delivers exceptional performance that significantly outperforms traditional React frameworks:
+rari delivers exceptional performance that significantly outperforms traditional JavaScript frameworks:
 
 ### Head-to-Head Comparison vs Next.js
 

@@ -18,56 +18,6 @@ declare global {
       promises?: Record<string, unknown>
       currentBoundaryId?: string | null
     }
-    '~reactServer'?: {
-      renderToReadableStream: (
-        element: unknown,
-        options?: Readonly<{ onError?: (error: unknown) => void }>,
-      ) => Promise<ReadableStream<Uint8Array>>
-    }
-    '~flightClient'?: {
-      createFromReadableStream: (
-        stream: ReadableStream,
-        options?: Readonly<{ ssrManifest?: unknown }>,
-      ) => Promise<unknown>
-    }
-    '~reactServerRenderer'?: {
-      renderToReadableStream: (
-        element: unknown,
-        bundlerConfig: unknown,
-        options?: Readonly<{ formState?: unknown; onError?: (error: unknown) => void }>,
-      ) => Promise<ReadableStream<Uint8Array>>
-      decodeAction?: (
-        body: FormData,
-        serverManifest: Readonly<{
-          readonly [key: string]: Readonly<{
-            readonly id: string
-            readonly name?: string
-            readonly chunks: readonly string[]
-          }>
-        }>,
-      ) => Promise<(() => Promise<unknown>) | null>
-      decodeFormState?: (
-        actionResult: unknown,
-        body: FormData,
-        serverManifest: Readonly<{
-          readonly [key: string]: Readonly<{
-            readonly id: string
-            readonly name?: string
-            readonly chunks: readonly string[]
-          }>
-        }>,
-      ) => Promise<unknown>
-      decodeReply?: (
-        body: string | FormData,
-        serverManifest: Readonly<{
-          readonly [key: string]: Readonly<{
-            readonly id: string
-            readonly name?: string
-            readonly chunks: readonly string[]
-          }>
-        }>,
-      ) => Promise<unknown>
-    }
     '~promises'?: {
       currentObject?: unknown
       resolvedValue?: unknown
@@ -116,20 +66,6 @@ declare global {
     'getServerFunction'?: (
       name: string,
     ) => ((...args: readonly unknown[]) => Promise<unknown>) | null
-    'renderToRsc'?: (element: unknown) => Promise<string>
-    'renderToHtmlFizz'?: (element: unknown) => Promise<string>
-    'React'?: {
-      createElement: (
-        component: unknown,
-        props: unknown,
-        ...children: readonly unknown[]
-      ) => unknown
-      cloneElement: (element: unknown, props?: unknown, ...children: readonly unknown[]) => unknown
-      Fragment: symbol
-      Suspense: symbol
-      use: <T>(usable: T | Promise<T>) => T
-      cache: <T extends (...args: readonly any[]) => any>(fn: T) => T
-    }
     'resolveServerFunctionsForComponent'?: (componentId?: string) => Promise<unknown>
     'clearServerFunctionCache'?: () => void
     'isServerFunctionRegistered'?: (functionName: string) => boolean
@@ -253,8 +189,6 @@ declare global {
         pumpChunk: (text: string) => Promise<boolean>,
       ) => Promise<void>
       streaming?: { complete?: boolean }
-      loadFullReactVendors?: () => boolean
-      loadRscReactVendors?: () => boolean
     }
   }
 

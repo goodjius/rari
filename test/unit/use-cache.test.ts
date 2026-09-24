@@ -10,9 +10,7 @@ const FIXTURE_DIR = path.join(process.cwd(), 'test/fixtures/use-cache')
 
 interface UseCacheTransformResult {
   code: string
-  needsReactCache: boolean
   needsCacheWrapper: boolean
-  needsRegisterRef: boolean
 }
 
 interface UseCacheAddon {
@@ -143,12 +141,9 @@ async function getData(id) {
       const result = addon.transformUseCache(src, defaultOpts)
 
       expect(result.code).not.toBe(src)
-      expect(result.needsReactCache).toBe(false)
       expect(result.needsCacheWrapper).toBe(true)
-      expect(result.needsRegisterRef).toBe(true)
-      expect(result.code).not.toContain('$$reactCache__')
       expect(result.code).toContain('$$cache__')
-      expect(result.code).toContain('registerServerReference')
+      expect(result.code).not.toContain('registerServerReference')
       expect(result.code).toContain('$$RSC_SERVER_CACHE_0_getData_INNER')
       expect(result.code).toContain('async function getData(id)')
       expect(result.code).not.toContain('async function getData([], id)')
@@ -162,9 +157,7 @@ async function getData(id) {
       const result = addon.transformUseCache(src, defaultOpts)
 
       expect(result.code).toBe(src)
-      expect(result.needsReactCache).toBe(false)
       expect(result.needsCacheWrapper).toBe(false)
-      expect(result.needsRegisterRef).toBe(false)
     })
 
     it('generates unique index for multiple use cache functions', () => {
@@ -194,7 +187,6 @@ function add(a, b) {
 `
       const result = addon.transformUseCache(src, defaultOpts)
 
-      expect(result.code).not.toContain('$$reactCache__')
       expect(result.code).not.toContain('$$cache__')
     })
 
@@ -338,12 +330,8 @@ async function fetchData(id) {
       const resultA = addon.transformUseCache(srcA, defaultOpts)
       const resultB = addon.transformUseCache(srcB, { ...defaultOpts, filename: 'test.js' })
 
-      const idA = /registerServerReference\(\$\$RSC_SERVER_CACHE_0_getData, "([^"]+)"/.exec(
-        resultA.code,
-      )?.[1]
-      const idB = /registerServerReference\(\$\$RSC_SERVER_CACHE_0_fetchData, "([^"]+)"/.exec(
-        resultB.code,
-      )?.[1]
+      const idA = /\$\$cache__\("default", "([^"]+)"/.exec(resultA.code)?.[1]
+      const idB = /\$\$cache__\("default", "([^"]+)"/.exec(resultB.code)?.[1]
 
       expect(idA).toBeTruthy()
       expect(idB).toBeTruthy()
@@ -478,7 +466,6 @@ export default async function(id) {
 
       expect(result.code).not.toBe(src)
       expect(result.needsCacheWrapper).toBe(true)
-      expect(result.needsRegisterRef).toBe(true)
       expect(result.code).not.toContain('"use cache"')
       expect(result.code).toContain('$$RSC_SERVER_CACHE_0_default_INNER')
       expect(result.code).toContain(
@@ -649,14 +636,10 @@ async function getData(id) {
     )
 
     expect(result).not.toBeNull()
-    expect(result).not.toContain("import { cache as $$reactCache__ } from 'react'")
     expect(result).toContain("import { $$cache__ } from '@rari/use-cache/runtime/cache-wrapper'")
-    expect(result).toContain(
-      "import { registerServerReference } from 'react-server-dom-rari/server'",
-    )
-    expect(result).not.toContain('$$reactCache__')
+    expect(result).not.toContain('react')
     expect(result).toContain('$$cache__')
-    expect(result).toContain('registerServerReference')
+    expect(result).not.toContain('registerServerReference')
     expect(result).not.toContain('"use cache"')
   })
 
@@ -725,9 +708,8 @@ export async function action() {
     )
 
     expect(result).not.toBeNull()
-    expect(result).not.toContain('$$reactCache__')
     expect(result).toContain('$$cache__')
-    expect(result).toContain('registerServerReference')
+    expect(result).not.toContain('registerServerReference')
   })
 
   it('processes file with multiple use cache functions', async () => {

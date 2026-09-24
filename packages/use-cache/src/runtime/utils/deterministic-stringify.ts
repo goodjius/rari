@@ -1,7 +1,12 @@
+/**
+ * `ordered: true` keeps object key / Map / Set insertion order significant (cache keys); the
+ * default sorts them so equal values stringify equally regardless of insertion order.
+ */
 export function deterministicStringify(
   obj: unknown,
   seen: WeakSet<object> = new WeakSet(),
   ancestors: WeakSet<object> = new WeakSet(),
+  ordered = false,
 ): string {
   if (obj === null) return 'null'
 
@@ -33,24 +38,25 @@ export function deterministicStringify(
     } else if (obj instanceof RegExp) {
       result = `RegExp(${JSON.stringify(obj.source)},${JSON.stringify(obj.flags)})`
     } else if (obj instanceof Set) {
-      const items = Array.from(obj)
-        .map(v => deterministicStringify(v, seen, ancestors))
-        .sort()
+      const items = Array.from(obj).map(v => deterministicStringify(v, seen, ancestors, ordered))
+
+      if (!ordered) items.sort()
       result = `Set[${items.join(',')}]`
     } else if (obj instanceof Map) {
-      const entries = Array.from(obj.entries())
-        .map(
-          ([k, v]) =>
-            `${deterministicStringify(k, seen, ancestors)}:${deterministicStringify(v, seen, ancestors)}`,
-        )
-        .sort()
+      const entries = Array.from(obj.entries()).map(
+        ([k, v]) =>
+          `${deterministicStringify(k, seen, ancestors, ordered)}:${deterministicStringify(v, seen, ancestors, ordered)}`,
+      )
+
+      if (!ordered) entries.sort()
       result = `Map{${entries.join(',')}}`
     } else if (Array.isArray(obj)) {
-      result = `[${obj.map(v => deterministicStringify(v, seen, ancestors)).join(',')}]`
+      result = `[${obj.map(v => deterministicStringify(v, seen, ancestors, ordered)).join(',')}]`
     } else {
-      const keys = Object.keys(obj).sort()
+      const keys = ordered ? Object.keys(obj) : Object.keys(obj).sort()
       const pairs = keys.map(
-        k => `${JSON.stringify(k)}:${deterministicStringify(Reflect.get(obj, k), seen, ancestors)}`,
+        k =>
+          `${JSON.stringify(k)}:${deterministicStringify(Reflect.get(obj, k), seen, ancestors, ordered)}`,
       )
       result = `{${pairs.join(',')}}`
     }

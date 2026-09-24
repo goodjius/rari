@@ -1,5 +1,3 @@
-use cow_utils::CowUtils;
-
 #[non_exhaustive]
 pub struct RscJsLoader;
 
@@ -18,21 +16,6 @@ fn create_js_wrapper(js_code: &str) -> String {
 }
 
 impl RscJsLoader {
-    #[expect(clippy::missing_errors_doc)]
-    pub fn load_component_render_with_data(
-        component_id: &str,
-        component_hash: &str,
-        props_json: &str,
-    ) -> Result<String, &'static str> {
-        let template = include_str!("js/component_render.ts");
-        let script = template
-            .cow_replace("{component_id}", component_id)
-            .cow_replace("{component_hash}", component_hash)
-            .cow_replace("{props_json}", props_json)
-            .into_owned();
-        Ok(script)
-    }
-
     pub fn create_component_environment_setup(component_id: &str) -> String {
         let setup_code = format!(
             r#"

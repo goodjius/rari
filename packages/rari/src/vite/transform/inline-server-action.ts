@@ -1,16 +1,6 @@
 import { skipNonCodeToken } from '../analysis/directives'
 
 const USE_SERVER = 'use server'
-const REGISTER_IMPORT = 'react-server-dom-rari/server'
-
-/** True when `code` already imports `registerServerReference` as a named binding. */
-export const REGISTER_SERVER_REFERENCE_IMPORT_RE =
-  /(?:^|[\n\r;])\s*import\s*\{[^}]*\bregisterServerReference\b[^}]*\}\s*from\s*["'][^"'\n]+["']/
-
-export function hasRegisterServerReferenceImport(code: string): boolean {
-  return REGISTER_SERVER_REFERENCE_IMPORT_RE.test(code)
-}
-
 const KNOWN_GLOBALS = new Set([
   'undefined',
   'NaN',
@@ -607,17 +597,14 @@ function locateInlineUseServerActions(source: string): LocatedAction[] {
   return actions
 }
 
-export interface InlineServerActionOptions {
-  /** Solid resolves actions by plain named export; captured variables are rejected. */
-  readonly solid?: boolean
-}
-
+/**
+ * Hoists inline `'use server'` functions to module-level exports so the action resolver can find
+ * them by name. Captured variables are rejected: there is no closure-binding channel yet.
+ */
 export function transformInlineServerActions(
   code: string,
   moduleId: string,
-  options: InlineServerActionOptions = {},
 ): InlineServerActionTransformResult | null {
-  const solid = options.solid === true
   const actions = locateInlineUseServerActions(code)
   if (actions.length === 0) return null
 
@@ -626,7 +613,6 @@ export function transformInlineServerActions(
   const rewrittenExportNames: string[] = []
   let result = code
   const hoisted: string[] = []
-  let needsRegisterImport = false
 
   const ordered = [...actions].sort((a, b) => b.start - a.start)
   let actionIndex = actions.length - 1
@@ -639,17 +625,14 @@ export function transformInlineServerActions(
 
     const body = stripUseServerPrologue(result, action.bodyOpen, action.bodyClose)
     const freeVars = collectFreeVars(body, action.paramsRaw, moduleBindings)
-    if (solid && freeVars.length > 0) {
+    if (freeVars.length > 0) {
       throw new Error(
         `[rari] Inline server action "${originalName}" in ${moduleId} captures ${freeVars.join(', ')} from its enclosing scope. ` +
           'Solid server actions cannot capture variables yet: move the action to module scope or pass the values as arguments.',
       )
     }
-    const params = [...freeVars, action.paramsRaw.trim()].filter(p => p !== '').join(', ')
+    const params = action.paramsRaw.trim()
     const asyncKw = action.isAsync ? 'async ' : ''
-
-    const bindExpr =
-      freeVars.length > 0 ? `${hoistedName}.bind(null, ${freeVars.join(', ')})` : hoistedName
 
     const {
       start: replaceStart,
@@ -657,78 +640,28 @@ export function transformInlineServerActions(
       bindingName,
     } = resolveActionReplaceRange(result, action.start)
 
-    let replacement = bindExpr
+    let replacement = hoistedName
     let rewrittenExport: string | null = null
 
-    if (solid) {
-      if (exportKind === 'default') {
-        rewrittenExport = 'default'
-        replacement = `export default ${hoistedName}`
-      } else if (exportKind === 'named' && action.name != null) {
-        rewrittenExport = action.name
-        replacement = `export const ${action.name} = ${hoistedName}`
-      } else if (exportKind === 'named' && bindingName != null) {
-        rewrittenExport = bindingName
-        replacement = hoistedName
-      } else if (action.kind === 'declaration' && action.name != null) {
-        replacement = `const ${action.name} = ${hoistedName}`
-      } else {
-        replacement = hoistedName
-      }
-      hoisted.unshift(
-        `${rewrittenExport == null ? 'export ' : ''}${asyncKw}function ${hoistedName}(${params}) {\n${body}\n}`,
-      )
-      if (rewrittenExport != null) rewrittenExportNames.unshift(rewrittenExport)
-      result = result.slice(0, replaceStart) + replacement + result.slice(action.end)
-      continue
-    }
-
     if (exportKind === 'default') {
-      // Cover declaration and arrow/default forms; register under "default" once.
       rewrittenExport = 'default'
-      replacement = `export default registerServerReference(${bindExpr}, ${JSON.stringify(moduleId)}, "default")`
+      replacement = `export default ${hoistedName}`
     } else if (exportKind === 'named' && action.name != null) {
-      // export async function name() { 'use server' ... }
       rewrittenExport = action.name
-      replacement = `export const ${action.name} = registerServerReference(${bindExpr}, ${JSON.stringify(moduleId)}, ${JSON.stringify(action.name)})`
+      replacement = `export const ${action.name} = ${hoistedName}`
     } else if (exportKind === 'named' && bindingName != null) {
-      // export const bindingName = async () => { 'use server' ... }
-      // Preserve surrounding binding; register under the exported name once.
       rewrittenExport = bindingName
-      replacement = `registerServerReference(${bindExpr}, ${JSON.stringify(moduleId)}, ${JSON.stringify(bindingName)})`
     } else if (action.kind === 'declaration' && action.name != null) {
-      replacement = `const ${action.name} = ${bindExpr}`
+      replacement = `const ${action.name} = ${hoistedName}`
     }
-    // else: non-exported arrow/expression; preserve surrounding binding (replacement = bindExpr)
 
-    if (rewrittenExport == null) {
-      hoisted.unshift(
-        `${asyncKw}function ${hoistedName}(${params}) {\n${body}\n}`,
-        `registerServerReference(${hoistedName}, ${JSON.stringify(moduleId)}, ${JSON.stringify(hoistedName)});`,
-      )
-    } else {
-      hoisted.unshift(`${asyncKw}function ${hoistedName}(${params}) {\n${body}\n}`)
-      rewrittenExportNames.unshift(rewrittenExport)
-    }
-    needsRegisterImport = true
-
+    // Actions with no exported name are still exported (as their hoisted name) so they resolve.
+    hoisted.unshift(
+      `${rewrittenExport == null ? 'export ' : ''}${asyncKw}function ${hoistedName}(${params}) {\n${body}\n}`,
+    )
+    if (rewrittenExport != null) rewrittenExportNames.unshift(rewrittenExport)
     result = result.slice(0, replaceStart) + replacement + result.slice(action.end)
   }
 
-  if (solid) {
-    return { code: `${result}\n\n${hoisted.join('\n')}\n`, actionNames, rewrittenExportNames }
-  }
-
-  const registerImport = needsRegisterImport
-    ? `import { registerServerReference } from ${JSON.stringify(REGISTER_IMPORT)};\n`
-    : ''
-
-  const prefix =
-    needsRegisterImport && !hasRegisterServerReferenceImport(result) ? registerImport : ''
-
-  return {
-    code: `${prefix}${result}\n\n${hoisted.join('\n')}\n`,
-    actionNames,
-    rewrittenExportNames,
-  }
+  return { code: `${result}\n\n${hoisted.join('\n')}\n`, actionNames, rewrittenExportNames }
 }

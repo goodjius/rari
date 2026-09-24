@@ -21,9 +21,7 @@ pub struct TransformOptions {
 #[napi(object)]
 pub struct TransformResult {
     pub code: String,
-    pub needs_react_cache: bool,
     pub needs_cache_wrapper: bool,
-    pub needs_register_ref: bool,
 }
 
 #[napi]
@@ -53,10 +51,5 @@ pub fn transform_use_cache(source: String, options: TransformOptions) -> Result<
     let result = transform::transform_source(&source, &options.filename, &hash_salt)
         .map_err(|e| Error::from_reason(e.to_string()))?;
 
-    Ok(TransformResult {
-        code: result.code,
-        needs_react_cache: result.needs_react_cache,
-        needs_cache_wrapper: result.needs_cache_wrapper,
-        needs_register_ref: result.needs_register_ref,
-    })
+    Ok(TransformResult { code: result.code, needs_cache_wrapper: result.needs_cache_wrapper })
 }

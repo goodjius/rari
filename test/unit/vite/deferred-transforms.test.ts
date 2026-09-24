@@ -59,15 +59,15 @@ describe('component global wrappers', () => {
 })
 
 describe('transformInlineServerActions', () => {
-  it('returns null when there are no inline actions', () => {
+  it('returns null when there is no inline use server function', () => {
     expect(
       transformInlineServerActions(`export async function Page() { return null }\n`, 'page'),
     ).toBeNull()
   })
 
-  it('hoists a nested async function declaration with no closure', () => {
+  it('hoists a nested declaration and keeps its local name', () => {
     const input = `import { persist } from './db'
-export default async function Page() {
+export default function Page() {
   async function save(formData) {
     'use server'
     await persist(formData)
@@ -78,17 +78,15 @@ export default async function Page() {
 
     const result = transformInlineServerActions(input, 'src/app/page')
     expect(result).not.toBeNull()
-    expect(result!.actionNames[0]).toMatch(/^\$\$ACTION_0_save$/)
+    expect(result!.actionNames[0]).toBe('$$ACTION_0_save')
     expect(result!.code).toContain('const save = $$ACTION_0_save')
-    expect(result!.code).toContain('async function $$ACTION_0_save(formData)')
+    expect(result!.code).toContain('export async function $$ACTION_0_save(formData)')
     expect(result!.code).toContain('await persist(formData)')
     expect(result!.code).not.toContain("'use server'")
-    expect(result!.code).toContain(
-      'registerServerReference($$ACTION_0_save, "src/app/page", "$$ACTION_0_save")',
-    )
+    expect(result!.code).not.toContain('registerServerReference')
   })
 
-  it('binds closed-over identifiers as leading parameters', () => {
+  it('rejects actions that capture enclosing variables', () => {
     const input = `import { db } from './db'
 export default async function Page({ id }) {
   async function like() {
@@ -99,10 +97,7 @@ export default async function Page({ id }) {
 }
 `
 
-    const result = transformInlineServerActions(input, 'page')
-    expect(result!.code).toContain('$$ACTION_0_like.bind(null, id)')
-    expect(result!.code).toContain('async function $$ACTION_0_like(id)')
-    expect(result!.code).toContain('await db.like(id)')
+    expect(() => transformInlineServerActions(input, 'page')).toThrow(/captures id/)
   })
 
   it('hoists async arrow actions', () => {
@@ -118,7 +113,9 @@ export default function Page() {
 
     const result = transformInlineServerActions(input, 'page')
     expect(result!.code).toContain('const action = $$ACTION_0_anonymous_server_function')
-    expect(result!.code).toContain('async function $$ACTION_0_anonymous_server_function(formData)')
+    expect(result!.code).toContain(
+      'export async function $$ACTION_0_anonymous_server_function(formData)',
+    )
   })
 
   it('ignores string literals and comments when collecting free vars', () => {
@@ -135,7 +132,6 @@ export default async function Page() {
 
     const result = transformInlineServerActions(input, 'page')
     expect(result!.code).toContain('async function $$ACTION_0_save(formData)')
-    expect(result!.code).not.toContain('.bind(null,')
   })
 
   it('emits export default for a directly default-exported inline action', () => {
@@ -147,20 +143,13 @@ export default async function save(formData) {
 `
 
     const result = transformInlineServerActions(input, 'page')
-    expect(result).not.toBeNull()
-    expect(result!.actionNames[0]).toMatch(/^\$\$ACTION_0_save$/)
     expect(result!.rewrittenExportNames).toEqual(['default'])
-    expect(result!.code).toContain(
-      'export default registerServerReference($$ACTION_0_save, "page", "default")',
-    )
+    expect(result!.code).toContain('export default $$ACTION_0_save')
     expect(result!.code).toContain('async function $$ACTION_0_save(formData)')
-    expect(result!.code).not.toContain('const save =')
-    expect(result!.code).not.toContain(
-      'registerServerReference($$ACTION_0_save, "page", "$$ACTION_0_save")',
-    )
+    expect(result!.code).not.toContain('export async function $$ACTION_0_save')
   })
 
-  it('preserves surrounding binding for exported arrow actions and registers once', () => {
+  it('keeps the exported binding of arrow actions', () => {
     const input = `import { db } from './db'
 export const save = async (formData) => {
   'use server'
@@ -170,35 +159,16 @@ export const save = async (formData) => {
 
     const result = transformInlineServerActions(input, 'page')
     expect(result!.rewrittenExportNames).toEqual(['save'])
-    expect(result!.code).toContain(
-      'export const save = registerServerReference($$ACTION_0_anonymous_server_function, "page", "save")',
-    )
+    expect(result!.code).toContain('export const save = $$ACTION_0_anonymous_server_function')
     expect(result!.code).toContain('async function $$ACTION_0_anonymous_server_function(formData)')
-    expect(result!.code).not.toContain(
-      'registerServerReference($$ACTION_0_anonymous_server_function, "page", "$$ACTION_0_anonymous_server_function")',
-    )
   })
-})
 
-describe('transformInlineServerActions (solid)', () => {
-  it('hoists exported inline actions as plain exports without registerServerReference', () => {
+  it('exports an exported function declaration under its own name', () => {
     const result = transformInlineServerActions(
       `export async function save(x) { 'use server'\n return x }\n`,
       'mod',
-      { solid: true },
     )
-    expect(result?.code).not.toContain('registerServerReference')
     expect(result?.code).toContain('export const save = $$ACTION_0_save')
     expect(result?.rewrittenExportNames).toEqual(['save'])
-  })
-
-  it('rejects actions that capture enclosing variables', () => {
-    expect(() =>
-      transformInlineServerActions(
-        `export function Page() { const id = 1\n async function act() { 'use server'\n return id }\n return act }\n`,
-        'mod',
-        { solid: true },
-      ),
-    ).toThrow(/captures id/)
   })
 })

@@ -390,9 +390,9 @@ mod tests {
             span: Default::default(),
             specifiers: vec![ImportSpecifier::Default(ImportDefaultSpecifier {
                 span: Default::default(),
-                local: ident("React"),
+                local: ident("Solid"),
             })],
-            src: Box::new(Str { span: Default::default(), value: "react".into(), raw: None }),
+            src: Box::new(Str { span: Default::default(), value: "solid-js".into(), raw: None }),
             with: None,
             phase: ImportPhase::Evaluation,
             type_only: false,
@@ -400,8 +400,8 @@ mod tests {
 
         let idents = collect_module_level_idents(&item);
         assert_eq!(idents.len(), 1);
-        let id = idents.into_iter().next().expect("expected imported React identifier");
-        assert_eq!(id.0.to_string(), "React");
+        let id = idents.into_iter().next().expect("expected imported Solid identifier");
+        assert_eq!(id.0.to_string(), "Solid");
     }
 
     #[test]

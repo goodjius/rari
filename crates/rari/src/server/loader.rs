@@ -1000,7 +1000,6 @@ impl ComponentLoader {
     /// packages/rari/src/vite/server/build.ts for `framework: 'solid'` apps)
     /// into `globalThis['~rari'].solidIslandManifest`. Mirrors
     /// `load_client_reference_manifest`; a missing file is not an error since
-    /// React apps never have one.
     pub async fn load_solid_island_manifest(
         runtime: &Arc<JsExecutionRuntime>,
     ) -> Result<(), RariError> {

@@ -21,8 +21,7 @@
     "napi",
     "napi-rs",
     "rust",
-    "react",
-    "server-components"
+    "solid"
   ],
   "exports": {
     ".": {
@@ -58,9 +57,6 @@
     "lint": "vp lint",
     "lint:fix": "vp lint --fix",
     "typecheck": "tsc"
-  },
-  "peerDependencies": {
-    "react-server-dom-webpack": "catalog:react"
   },
   "optionalDependencies": {
     "@rari/use-cache-darwin-arm64": "0.15.17",

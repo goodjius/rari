@@ -18,7 +18,7 @@ import {
   resetUseCacheBuildIdForTests,
   setUseCacheBuildId,
 } from './encoding/build-id'
-import { encodeCacheKeyParts } from './encoding/rsc-encoding'
+import { encodeCacheKeyParts } from './encoding/key-encoding'
 import { registerUseCacheRuntimeGlobals } from './globals/use-cache-runtime-globals'
 import { nullCacheStorage } from './storage/null'
 import { getStorage } from './storage/registry'
@@ -42,6 +42,7 @@ type CacheableFunction<Args extends unknown[]> = (...args: Args) => unknown
 const pending = new Map<string, Promise<unknown>>()
 const keyComputeInflight = new Map<string, Promise<string>>()
 
+// oxlint-disable-next-line typescript/require-await -- async keeps the promise contract of getCacheKeyPromise
 async function cacheKey(
   buildId: string,
   kind: string,
@@ -51,7 +52,7 @@ async function cacheKey(
   const parts: unknown[] = [buildId, kind, id, args]
   if (kind === 'private') parts.push(getPrivateCachePartitionKey())
 
-  const serialized = await encodeCacheKeyParts(parts)
+  const serialized = encodeCacheKeyParts(parts)
   return createHash('sha256').update(serialized, 'utf8').digest('hex')
 }
 
